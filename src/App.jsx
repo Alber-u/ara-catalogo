@@ -2132,8 +2132,7 @@ function CatalogoApp({ usuario, onLogout }) {
           unidad: l.esMetrosSueltos ? "m" : l.producto.unidad,
           precioUnit: l.neto, importe: l.subtotal,
           mPorUnidad: l.mPorUnidad,
-          metros: l.metros,
-          esMetrosSueltos: l.esMetrosSueltos
+          metros: l.metros
         })),
         lineasAram: lineasCarrito.filter(l => l.prov === "aram").map(l => ({
           ref: l.proveedor.ref,
@@ -2142,8 +2141,7 @@ function CatalogoApp({ usuario, onLogout }) {
           unidad: l.esMetrosSueltos ? "m" : l.producto.unidad,
           precioUnit: l.neto, importe: l.subtotal,
           mPorUnidad: l.mPorUnidad,
-          metros: l.metros,
-          esMetrosSueltos: l.esMetrosSueltos
+          metros: l.metros
         })),
         lineasNoListado: lineasNoListadas,
         notas: notasPedido,
@@ -2263,13 +2261,20 @@ function CatalogoApp({ usuario, onLogout }) {
         doc.setFont("helvetica", "normal");
         lineas.forEach(l => {
           if (y > 270) { doc.addPage(); y = 20; }
-          const sufijo = (!l.esMetrosSueltos && l.metros) ? ` — ${l.cantidad} ${l.unidad} (${l.metros}m)` : "";
-          const descFull = l.desc + sufijo;
-          const desc = descFull.length > 55 ? descFull.substring(0, 53) + ".." : descFull;
+          const desc = l.desc.length > 55 ? l.desc.substring(0, 53) + ".." : l.desc;
           doc.text(String(l.cantidad), 17, y); doc.text(String(l.ref || "—"), 32, y);
           doc.text(desc, 60, y);
           doc.text("€" + l.precioUnit.toFixed(2), 152, y, { align: "right" });
-          doc.text("€" + l.importe.toFixed(2), 192, y, { align: "right" }); y += 4;
+          doc.text("€" + l.importe.toFixed(2), 192, y, { align: "right" }); y += 3.5;
+          // Segunda línea: info rollos o metros sueltos
+          if (l.metros || l.esMetrosSueltos) {
+            const nota = l.esMetrosSueltos ? "→ metros sueltos" : `→ ${l.cantidad} ${l.unidad} · ${l.metros}m`;
+            doc.setFont("helvetica", "italic"); doc.setFontSize(7);
+            doc.setTextColor(100);
+            doc.text(nota, 62, y); y += 3.5;
+            doc.setFont("helvetica", "normal"); doc.setFontSize(8);
+            doc.setTextColor(0);
+          }
         });
         y += 2; doc.line(120, y, 195, y); y += 4;
         doc.setFont("helvetica", "normal"); doc.setFontSize(8);
@@ -2406,15 +2411,21 @@ function CatalogoApp({ usuario, onLogout }) {
 
       lineasCatalogo.forEach(l => {
         if (y > 270) { doc.addPage(); y = 20; }
-        const sufijo2 = (!l.esMetrosSueltos && l.metros) ? ` — ${l.cantidad} ${l.unidad} (${l.metros}m)` : "";
-        const descFull2 = l.desc + sufijo2;
-        const desc = descFull2.length > 55 ? descFull2.substring(0, 53) + ".." : descFull2;
+        const desc = l.desc.length > 55 ? l.desc.substring(0, 53) + ".." : l.desc;
         doc.text(String(l.cantidad), 17, y);
         doc.text(String(l.ref || "—"), 32, y);
         doc.text(desc, 60, y);
         doc.text("€" + l.precioUnit.toFixed(2), 152, y, { align: "right" });
         doc.text("€" + l.importe.toFixed(2), 192, y, { align: "right" });
-        y += 4;
+        y += 3.5;
+        if (l.metros || l.esMetrosSueltos) {
+          const nota = l.esMetrosSueltos ? "→ metros sueltos" : `→ ${l.cantidad} ${l.unidad} · ${l.metros}m`;
+          doc.setFont("helvetica", "italic"); doc.setFontSize(7);
+          doc.setTextColor(100);
+          doc.text(nota, 62, y); y += 3.5;
+          doc.setFont("helvetica", "normal"); doc.setFontSize(8);
+          doc.setTextColor(0);
+        }
       });
       y += 2;
       doc.line(120, y, 195, y); y += 4;
