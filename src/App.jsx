@@ -3260,6 +3260,7 @@ function PestañaProductos({ data, api, reload }) {
   const [añadiendo, setAñadiendo] = useState(false);
   const [busq, setBusq] = useState("");
   const [validando, setValidando] = useState(null); // pendiente que se valida
+  const [modalImportar, setModalImportar] = useState(false);
 
   const productos = (data.productos || []).filter(p =>
     busq === "" ||
@@ -3312,19 +3313,39 @@ function PestañaProductos({ data, api, reload }) {
         </div>
       )}
 
-      {/* Buscador + botón añadir */}
-      <div className="flex gap-2">
-        <div className="relative flex-1">
-          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
-          <input type="text" placeholder="Buscar por descripción o referencia…"
-                 value={busq} onChange={(e) => setBusq(e.target.value)}
-                 className="w-full pl-10 pr-3 py-2 border-2 border-stone-900 bg-white text-sm focus:outline-none focus:bg-amber-50 font-mono" />
+      {/* Buscador + botones */}
+      <div className="space-y-2">
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
+            <input type="text" placeholder="Buscar por descripción o referencia…"
+                   value={busq} onChange={(e) => setBusq(e.target.value)}
+                   className="w-full pl-10 pr-3 py-2 border-2 border-stone-900 bg-white text-sm focus:outline-none focus:bg-amber-50 font-mono" />
+          </div>
+          <button onClick={() => setAñadiendo(true)}
+                  className="bg-stone-900 text-amber-400 px-4 py-2 text-xs font-black tracking-widest border-2 border-stone-900 hover:bg-amber-400 hover:text-stone-900"
+                  style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+            + NUEVO
+          </button>
         </div>
-        <button onClick={() => setAñadiendo(true)}
-                className="bg-stone-900 text-amber-400 px-4 py-2 text-xs font-black tracking-widest border-2 border-stone-900 hover:bg-amber-400 hover:text-stone-900"
-                style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
-          + NUEVO
-        </button>
+        <div className="flex gap-2 flex-wrap">
+          <button onClick={() => setModalImportar(true)}
+                  className="text-[10px] font-bold tracking-widest px-3 py-1.5 border-2 border-stone-900 bg-emerald-100 hover:bg-emerald-200 text-stone-900">
+            📥 IMPORTAR
+          </button>
+          <button onClick={() => exportarCSV(data.productos)}
+                  className="text-[10px] font-bold tracking-widest px-3 py-1.5 border-2 border-stone-900 bg-amber-100 hover:bg-amber-200 text-stone-900">
+            📤 EXPORTAR CSV
+          </button>
+          <button onClick={() => exportarJSON(data.productos)}
+                  className="text-[10px] font-bold tracking-widest px-3 py-1.5 border-2 border-stone-900 bg-amber-100 hover:bg-amber-200 text-stone-900">
+            📤 EXPORTAR JSON
+          </button>
+          <button onClick={() => descargarPlantillaCSV()}
+                  className="text-[10px] font-bold tracking-widest px-3 py-1.5 border-2 border-stone-900 bg-stone-100 hover:bg-stone-200 text-stone-900">
+            📋 PLANTILLA CSV
+          </button>
+        </div>
       </div>
 
       <div className="text-[10px] text-stone-500 tracking-widest">
@@ -3403,6 +3424,502 @@ function PestañaProductos({ data, api, reload }) {
           esValidacion={validando}
         />
       )}
+      {modalImportar && (
+        <ModalImportarProductos
+          productosActuales={data.productos || []}
+          api={api}
+          reload={reload}
+          onCerrar={() => setModalImportar(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+// =========================================================
+//  IMPORTAR / EXPORTAR PRODUCTOS — funciones helper
+// =========================================================
+
+// Cabeceras del CSV en orden
+const CSV_HEADERS = [
+  "id", "desc", "familia", "unidad", "img",
+  "aqua_ref", "aqua_bruto", "aqua_dto", "aqua_marca",
+  "aram_ref", "aram_bruto", "aram_dto", "aram_marca"
+];
+
+// Escapa una celda CSV: si tiene coma, comillas o salto de línea → entrecomillar
+function csvEscape(v) {
+  if (v === null || v === undefined) return "";
+  const s = String(v);
+  if (s.includes(",") || s.includes('"') || s.includes("\n") || s.includes(";")) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
+
+// Genera el contenido CSV completo a partir de un array de productos
+function generarCSV(productos) {
+  const filas = [CSV_HEADERS.join(",")];
+  for (const p of productos) {
+    const aq = p.proveedores?.aqua || {};
+    const ar = p.proveedores?.aram || {};
+    const fila = [
+      csvEscape(p.id || ""),
+      csvEscape(p.desc || ""),
+      csvEscape(p.familia || ""),
+      csvEscape(p.unidad || ""),
+      csvEscape(p.img || ""),
+      csvEscape(aq.ref || ""),
+      csvEscape(aq.bruto ?? ""),
+      csvEscape(aq.dto ?? ""),
+      csvEscape(aq.marca || ""),
+      csvEscape(ar.ref || ""),
+      csvEscape(ar.bruto ?? ""),
+      csvEscape(ar.dto ?? ""),
+      csvEscape(ar.marca || "")
+    ];
+    filas.push(fila.join(","));
+  }
+  // BOM UTF-8 para que Excel lo abra bien con acentos
+  return "\ufeff" + filas.join("\n");
+}
+
+// Descarga un blob como archivo
+function descargarArchivo(contenido, nombre, tipoMime) {
+  const blob = new Blob([contenido], { type: tipoMime + ";charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = nombre;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function exportarCSV(productos) {
+  const contenido = generarCSV(productos);
+  const fecha = new Date().toISOString().slice(0, 10);
+  descargarArchivo(contenido, `ARA_productos_${fecha}.csv`, "text/csv");
+}
+
+function exportarJSON(productos) {
+  const contenido = JSON.stringify(productos, null, 2);
+  const fecha = new Date().toISOString().slice(0, 10);
+  descargarArchivo(contenido, `ARA_productos_${fecha}.json`, "application/json");
+}
+
+function descargarPlantillaCSV() {
+  // Plantilla con cabeceras + 2 filas de ejemplo
+  const ejemplo = [
+    {
+      id: "", // si vacío se generará automáticamente
+      desc: "Ejemplo: codo multicapa 25",
+      familia: "Multicapa",
+      unidad: "uni",
+      img: "mcap",
+      proveedores: {
+        aqua: { ref: "25742", bruto: 10.82, dto: 73, marca: "MT" },
+        aram: { ref: "MCCDO25", bruto: 7.45, dto: 50, marca: "FE" }
+      }
+    },
+    {
+      id: "",
+      desc: "Ejemplo: producto solo en Aramburu (deja vacíos los campos aqua_*)",
+      familia: "Varios",
+      unidad: "uni",
+      img: "tapon",
+      proveedores: {
+        aram: { ref: "REF123", bruto: 5.50, dto: 50, marca: "—" }
+      }
+    }
+  ];
+  const contenido = generarCSV(ejemplo);
+  descargarArchivo(contenido, "ARA_plantilla_productos.csv", "text/csv");
+}
+
+// Parser CSV simple que respeta comillas y comas dentro de campos
+function parsearCSV(texto) {
+  // Quitar BOM si existe
+  if (texto.charCodeAt(0) === 0xFEFF) texto = texto.slice(1);
+
+  const filas = [];
+  let fila = [];
+  let celda = "";
+  let dentroDeComillas = false;
+  let i = 0;
+
+  while (i < texto.length) {
+    const c = texto[i];
+    if (dentroDeComillas) {
+      if (c === '"') {
+        if (texto[i + 1] === '"') { celda += '"'; i += 2; continue; } // comilla escapada
+        dentroDeComillas = false;
+        i++;
+        continue;
+      }
+      celda += c;
+      i++;
+    } else {
+      if (c === '"') { dentroDeComillas = true; i++; continue; }
+      if (c === ',' || c === ';') { fila.push(celda); celda = ""; i++; continue; }
+      if (c === '\n' || c === '\r') {
+        // Cierra fila
+        if (c === '\r' && texto[i+1] === '\n') i++; // CRLF
+        fila.push(celda);
+        if (fila.length > 1 || fila[0] !== "") filas.push(fila);
+        fila = [];
+        celda = "";
+        i++;
+        continue;
+      }
+      celda += c;
+      i++;
+    }
+  }
+  if (celda !== "" || fila.length > 0) {
+    fila.push(celda);
+    filas.push(fila);
+  }
+  return filas;
+}
+
+// Convierte filas CSV (con cabeceras en la primera fila) a un array de productos
+function csvAProductos(filas) {
+  if (filas.length < 2) throw new Error("El archivo está vacío o no tiene datos");
+  const cabeceras = filas[0].map(h => h.trim().toLowerCase());
+
+  // Validar que están las cabeceras mínimas
+  const obligatorias = ["desc", "familia"];
+  const faltan = obligatorias.filter(h => !cabeceras.includes(h));
+  if (faltan.length > 0) {
+    throw new Error("Faltan columnas obligatorias: " + faltan.join(", "));
+  }
+
+  const idx = (nombre) => cabeceras.indexOf(nombre);
+
+  const productos = [];
+  const errores = [];
+
+  for (let i = 1; i < filas.length; i++) {
+    const fila = filas[i];
+    if (fila.every(c => !c.trim())) continue; // fila vacía, ignorar
+
+    const get = (col) => {
+      const j = idx(col);
+      return j < 0 ? "" : (fila[j] || "").trim();
+    };
+    const getNum = (col) => {
+      const v = get(col);
+      if (v === "") return null;
+      const n = parseFloat(v.replace(",", "."));
+      return isNaN(n) ? null : n;
+    };
+
+    const desc = get("desc");
+    if (!desc) {
+      errores.push({ linea: i + 1, error: "Sin descripción" });
+      continue;
+    }
+
+    const p = {
+      id: get("id") || null,
+      desc,
+      familia: get("familia") || "Varios",
+      unidad: get("unidad") || "uni",
+      img: get("img") || "tapon",
+      proveedores: {}
+    };
+
+    // Aquatubo
+    const aqRef = get("aqua_ref");
+    const aqBruto = getNum("aqua_bruto");
+    if (aqRef && aqBruto !== null) {
+      p.proveedores.aqua = {
+        ref: aqRef,
+        bruto: aqBruto,
+        dto: getNum("aqua_dto") ?? 0,
+        marca: get("aqua_marca") || "—"
+      };
+    }
+    // Aramburu
+    const arRef = get("aram_ref");
+    const arBruto = getNum("aram_bruto");
+    if (arRef && arBruto !== null) {
+      p.proveedores.aram = {
+        ref: arRef,
+        bruto: arBruto,
+        dto: getNum("aram_dto") ?? 0,
+        marca: get("aram_marca") || "—"
+      };
+    }
+
+    if (!p.proveedores.aqua && !p.proveedores.aram) {
+      errores.push({ linea: i + 1, error: `"${desc}" sin precios de ningún proveedor` });
+      continue;
+    }
+
+    productos.push(p);
+  }
+
+  return { productos, errores };
+}
+
+// =========================================================
+//  Modal importar productos
+// =========================================================
+function ModalImportarProductos({ productosActuales, api, reload, onCerrar }) {
+  const [archivo, setArchivo] = useState(null);
+  const [analisis, setAnalisis] = useState(null); // { coinciden, nuevos, faltan, errores }
+  const [accionFaltan, setAccionFaltan] = useState("mantener"); // mantener | borrar
+  const [aplicando, setAplicando] = useState(false);
+  const [error, setError] = useState("");
+  const [progreso, setProgreso] = useState(null);
+
+  const handleArchivo = async (e) => {
+    setError("");
+    setAnalisis(null);
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setArchivo(f);
+
+    try {
+      const texto = await f.text();
+      let importados, errores;
+
+      // Detectar JSON o CSV por extensión y contenido
+      const esJSON = f.name.toLowerCase().endsWith(".json") || texto.trim().startsWith("[") || texto.trim().startsWith("{");
+
+      if (esJSON) {
+        let data;
+        try {
+          data = JSON.parse(texto);
+        } catch (er) {
+          throw new Error("JSON mal formado: " + er.message);
+        }
+        const arr = Array.isArray(data) ? data : (data.productos || []);
+        importados = arr.filter(p => p && p.desc);
+        errores = arr.filter(p => !p?.desc).map((p, i) => ({ linea: i + 1, error: "Sin descripción" }));
+      } else {
+        // CSV
+        const filas = parsearCSV(texto);
+        const r = csvAProductos(filas);
+        importados = r.productos;
+        errores = r.errores;
+      }
+
+      // Comparar con productosActuales
+      const idsActuales = new Set(productosActuales.map(p => p.id));
+      const descsActuales = new Map(productosActuales.map(p => [p.desc.toLowerCase().trim(), p.id]));
+      const idsImportados = new Set();
+
+      const coinciden = []; // van a actualizarse
+      const nuevos = [];
+
+      for (const p of importados) {
+        // Si trae id que existe → actualizar
+        if (p.id && idsActuales.has(p.id)) {
+          coinciden.push(p);
+          idsImportados.add(p.id);
+        } else {
+          // Si no trae id pero hay coincidencia por descripción exacta → actualizar
+          const idEncontrado = descsActuales.get(p.desc.toLowerCase().trim());
+          if (idEncontrado) {
+            coinciden.push({ ...p, id: idEncontrado });
+            idsImportados.add(idEncontrado);
+          } else {
+            nuevos.push(p);
+          }
+        }
+      }
+
+      // Productos en el catálogo actual que NO están en el CSV
+      const faltan = productosActuales.filter(p => !idsImportados.has(p.id));
+
+      setAnalisis({ coinciden, nuevos, faltan, errores });
+    } catch (e) {
+      setError(e.message);
+      setAnalisis(null);
+    }
+  };
+
+  const aplicarCambios = async () => {
+    if (!analisis) return;
+    setAplicando(true);
+    setError("");
+    let n = 0;
+    const total = analisis.coinciden.length + analisis.nuevos.length + (accionFaltan === "borrar" ? analisis.faltan.length : 0);
+    setProgreso({ hechos: 0, total });
+
+    try {
+      // 1) Actualizar coincidencias
+      for (const p of analisis.coinciden) {
+        await api.put("/admin/producto/" + p.id, {
+          desc: p.desc, familia: p.familia, unidad: p.unidad, img: p.img,
+          proveedores: p.proveedores
+        });
+        n++; setProgreso({ hechos: n, total });
+      }
+      // 2) Crear nuevos
+      for (const p of analisis.nuevos) {
+        const body = { desc: p.desc, familia: p.familia, unidad: p.unidad, img: p.img, proveedores: p.proveedores };
+        if (p.id) body.id = p.id;
+        await api.post("/admin/producto", body);
+        n++; setProgreso({ hechos: n, total });
+      }
+      // 3) Borrar los que faltan (si así se decidió)
+      if (accionFaltan === "borrar") {
+        for (const p of analisis.faltan) {
+          await api.del("/admin/producto/" + p.id);
+          n++; setProgreso({ hechos: n, total });
+        }
+      }
+
+      reload();
+      alert(`✓ Importación completada:
+  • ${analisis.coinciden.length} actualizados
+  • ${analisis.nuevos.length} añadidos
+  • ${accionFaltan === "borrar" ? analisis.faltan.length + " borrados" : analisis.faltan.length + " mantenidos sin cambios"}`);
+      onCerrar();
+    } catch (e) {
+      setError("Error aplicando cambios: " + e.message + ". Algunos productos pueden haberse actualizado, otros no.");
+    } finally {
+      setAplicando(false);
+      setProgreso(null);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="absolute inset-0 bg-stone-900/50" onClick={!aplicando ? onCerrar : undefined} />
+      <div className="relative bg-white border-4 border-stone-900 w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-[8px_8px_0_0_rgba(0,0,0,1)]">
+        <div className="bg-emerald-500 border-b-4 border-stone-900 p-3 flex items-center justify-between sticky top-0 z-10">
+          <h3 className="font-black text-base" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+            📥 IMPORTAR PRODUCTOS
+          </h3>
+          <button onClick={onCerrar} disabled={aplicando}
+                  className="bg-stone-900 text-amber-400 p-1.5 border-2 border-stone-900 disabled:opacity-50">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="p-4 space-y-3">
+          <div className="bg-stone-50 border-2 border-stone-300 p-3 text-xs leading-relaxed">
+            <div className="font-bold mb-1">Sube un archivo CSV o JSON con tus productos.</div>
+            <div className="text-[10px] text-stone-600">
+              · Formato CSV con cabeceras: <code className="bg-stone-200 px-1">id, desc, familia, unidad, img, aqua_ref, aqua_bruto, aqua_dto, aqua_marca, aram_ref, aram_bruto, aram_dto, aram_marca</code>
+              <br />· Si un producto tiene <strong>id</strong> que ya existe en tu catálogo → se actualizará
+              <br />· Si no hay <strong>id</strong> pero la descripción coincide → se actualizará
+              <br />· Productos nuevos se añaden automáticamente
+              <br />· Si quieres una plantilla, descarga la plantilla CSV desde el botón anterior
+            </div>
+          </div>
+
+          {/* Selector archivo */}
+          <div>
+            <label className="block w-full border-2 border-dashed border-stone-900 p-6 text-center cursor-pointer hover:bg-amber-50 transition-all">
+              <input type="file" accept=".csv,.json,text/csv,application/json"
+                     onChange={handleArchivo}
+                     disabled={aplicando}
+                     className="hidden" />
+              <div className="text-2xl mb-1">📁</div>
+              <div className="text-xs font-bold tracking-widest">
+                {archivo ? archivo.name : "SELECCIONAR ARCHIVO CSV/JSON"}
+              </div>
+            </label>
+          </div>
+
+          {error && (
+            <div className="bg-red-100 border-2 border-red-700 text-red-900 p-3 text-xs">
+              ⚠ {error}
+            </div>
+          )}
+
+          {/* Análisis */}
+          {analisis && (
+            <div className="space-y-3">
+              <div className="border-2 border-stone-900">
+                <div className="bg-stone-900 text-amber-400 p-2 text-xs font-bold tracking-widest">
+                  📊 ANÁLISIS DEL ARCHIVO
+                </div>
+                <div className="divide-y divide-stone-200">
+                  {analisis.coinciden.length > 0 && (
+                    <div className="p-2 flex items-center gap-2 text-xs">
+                      <span className="text-emerald-700 text-base">✏</span>
+                      <span><strong>{analisis.coinciden.length}</strong> producto(s) ya existen en tu catálogo — <strong>se ACTUALIZARÁN</strong></span>
+                    </div>
+                  )}
+                  {analisis.nuevos.length > 0 && (
+                    <div className="p-2 flex items-center gap-2 text-xs">
+                      <span className="text-amber-700 text-base">🆕</span>
+                      <span><strong>{analisis.nuevos.length}</strong> producto(s) nuevos — <strong>se AÑADIRÁN</strong></span>
+                    </div>
+                  )}
+                  {analisis.faltan.length > 0 && (
+                    <div className="p-2 text-xs">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-stone-700 text-base">⚠</span>
+                        <span><strong>{analisis.faltan.length}</strong> producto(s) están en tu catálogo pero NO en el archivo:</span>
+                      </div>
+                      <div className="ml-7 space-y-1">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input type="radio" name="faltan" checked={accionFaltan === "mantener"}
+                                 onChange={() => setAccionFaltan("mantener")} />
+                          <span><strong>Mantener</strong> sin cambios (recomendado)</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input type="radio" name="faltan" checked={accionFaltan === "borrar"}
+                                 onChange={() => setAccionFaltan("borrar")} />
+                          <span className="text-red-700"><strong>Borrar</strong> del catálogo (¡cuidado!)</span>
+                        </label>
+                      </div>
+                    </div>
+                  )}
+                  {analisis.errores.length > 0 && (
+                    <div className="p-2 bg-red-50 text-xs">
+                      <div className="font-bold text-red-900 mb-1">⚠ {analisis.errores.length} fila(s) con errores (se ignorarán):</div>
+                      <div className="ml-3 space-y-0.5 max-h-24 overflow-y-auto">
+                        {analisis.errores.slice(0, 10).map((e, i) => (
+                          <div key={i} className="text-red-800">• Línea {e.linea}: {e.error}</div>
+                        ))}
+                        {analisis.errores.length > 10 && (
+                          <div className="italic">…y {analisis.errores.length - 10} más</div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Progreso */}
+              {progreso && (
+                <div className="bg-amber-100 border-2 border-amber-700 p-3 text-xs">
+                  <div className="font-bold mb-1">Aplicando cambios… {progreso.hechos} / {progreso.total}</div>
+                  <div className="w-full bg-amber-200 h-2">
+                    <div className="bg-amber-700 h-full transition-all" style={{ width: (progreso.hechos / Math.max(1, progreso.total) * 100) + "%" }} />
+                  </div>
+                </div>
+              )}
+
+              {/* Botones */}
+              <div className="flex gap-2 pt-2 border-t-2 border-stone-200">
+                <button onClick={onCerrar} disabled={aplicando}
+                        className="flex-1 text-xs font-bold tracking-widest p-3 border-2 border-stone-900 bg-white hover:bg-stone-100 disabled:opacity-50">
+                  CANCELAR
+                </button>
+                <button onClick={aplicarCambios} disabled={aplicando || (analisis.coinciden.length === 0 && analisis.nuevos.length === 0 && (accionFaltan !== "borrar" || analisis.faltan.length === 0))}
+                        className={`flex-[2] text-xs font-black tracking-widest p-3 border-2 border-stone-900 transition-all ${
+                          aplicando ? "bg-stone-300 text-stone-600 cursor-wait"
+                            : "bg-emerald-700 text-white hover:bg-emerald-800"
+                        }`}
+                        style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+                  {aplicando ? "APLICANDO…" : "✓ APLICAR CAMBIOS"}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
