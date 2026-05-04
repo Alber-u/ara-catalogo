@@ -1829,7 +1829,7 @@ function PantallaLogin({ onLogin, onAdminClick }) {
 // =========================================================
 //  CARD DE PRODUCTO con comparativa lado a lado
 // =========================================================
-function CardProducto({ producto, cantidadAqua, cantidadAram, addAqua, addAram, removeAqua, removeAram, onClick }) {
+function CardProducto({ producto, cantidadAqua, cantidadAram, addAqua, addAram, removeAqua, removeAram, setExactaAqua, setExactaAram, onClick }) {
   const aqua = producto.proveedores.aqua;
   const aram = producto.proveedores.aram;
   const ganador = proveedorMasBarato(producto);
@@ -1869,7 +1869,10 @@ function CardProducto({ producto, cantidadAqua, cantidadAram, addAqua, addAram, 
               <div className="font-black text-lg text-stone-900 leading-none mt-1" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
                 €{netoAqua.toFixed(2)}
               </div>
-              <div className="font-mono text-[9px] text-stone-500 mb-2">/{producto.unidad}</div>
+              <div className="font-mono text-[9px] text-stone-500 mb-1">/{producto.unidad}</div>
+              {producto.cantidadPorUnidad && (
+                <div className="text-[9px] text-stone-400 mb-1">1 {producto.unidad} = {producto.cantidadPorUnidad}m</div>
+              )}
               <div className="flex items-center justify-between">
                 {cantidadAqua === 0 ? (
                   <button onClick={(e) => { e.stopPropagation(); addAqua(); }}
@@ -1877,10 +1880,15 @@ function CardProducto({ producto, cantidadAqua, cantidadAram, addAqua, addAram, 
                     + AÑADIR
                   </button>
                 ) : (
-                  <div className="flex items-center w-full justify-between bg-emerald-700 text-white px-2 py-1">
-                    <button onClick={(e) => { e.stopPropagation(); removeAqua(); }}><Minus className="w-3 h-3" /></button>
-                    <span className="font-mono text-xs font-bold">{cantidadAqua}</span>
-                    <button onClick={(e) => { e.stopPropagation(); addAqua(); }}><Plus className="w-3 h-3" /></button>
+                  <div className="flex items-center w-full justify-between bg-emerald-700 text-white px-1 py-1 gap-1">
+                    <button onClick={(e) => { e.stopPropagation(); removeAqua(); }} className="p-0.5"><Minus className="w-3 h-3" /></button>
+                    <input
+                      type="number" min="0" value={cantidadAqua}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => { const v = parseInt(e.target.value); if (!isNaN(v)) setExactaAqua(v); }}
+                      className="w-10 text-center font-mono text-xs font-bold bg-emerald-800 text-white border border-emerald-500 focus:outline-none focus:bg-emerald-900 rounded-none"
+                    />
+                    <button onClick={(e) => { e.stopPropagation(); addAqua(); }} className="p-0.5"><Plus className="w-3 h-3" /></button>
                   </div>
                 )}
               </div>
@@ -1903,7 +1911,10 @@ function CardProducto({ producto, cantidadAqua, cantidadAram, addAqua, addAram, 
               <div className="font-black text-lg text-stone-900 leading-none mt-1" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
                 €{netoAram.toFixed(2)}
               </div>
-              <div className="font-mono text-[9px] text-stone-500 mb-2">/{producto.unidad}</div>
+              <div className="font-mono text-[9px] text-stone-500 mb-1">/{producto.unidad}</div>
+              {producto.cantidadPorUnidad && (
+                <div className="text-[9px] text-stone-400 mb-1">1 {producto.unidad} = {producto.cantidadPorUnidad}m</div>
+              )}
               <div className="flex items-center justify-between">
                 {cantidadAram === 0 ? (
                   <button onClick={(e) => { e.stopPropagation(); addAram(); }}
@@ -1911,10 +1922,15 @@ function CardProducto({ producto, cantidadAqua, cantidadAram, addAqua, addAram, 
                     + AÑADIR
                   </button>
                 ) : (
-                  <div className="flex items-center w-full justify-between bg-amber-700 text-white px-2 py-1">
-                    <button onClick={(e) => { e.stopPropagation(); removeAram(); }}><Minus className="w-3 h-3" /></button>
-                    <span className="font-mono text-xs font-bold">{cantidadAram}</span>
-                    <button onClick={(e) => { e.stopPropagation(); addAram(); }}><Plus className="w-3 h-3" /></button>
+                  <div className="flex items-center w-full justify-between bg-amber-700 text-white px-1 py-1 gap-1">
+                    <button onClick={(e) => { e.stopPropagation(); removeAram(); }} className="p-0.5"><Minus className="w-3 h-3" /></button>
+                    <input
+                      type="number" min="0" value={cantidadAram}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => { const v = parseInt(e.target.value); if (!isNaN(v)) setExactaAram(v); }}
+                      className="w-10 text-center font-mono text-xs font-bold bg-amber-800 text-white border border-amber-500 focus:outline-none focus:bg-amber-900 rounded-none"
+                    />
+                    <button onClick={(e) => { e.stopPropagation(); addAram(); }} className="p-0.5"><Plus className="w-3 h-3" /></button>
                   </div>
                 )}
               </div>
@@ -2671,6 +2687,8 @@ function CatalogoApp({ usuario, onLogout }) {
               addAram={() => addProv(p.id, "aram")}
               removeAqua={() => removeProv(p.id, "aqua")}
               removeAram={() => removeProv(p.id, "aram")}
+              setExactaAqua={(n) => setExacta(p.id, "aqua", n)}
+              setExactaAram={(n) => setExacta(p.id, "aram", n)}
               onClick={() => setProductoSel(p)}
             />
           ))}
@@ -4239,6 +4257,7 @@ function ModalEditarProducto({ producto, api, reload, onCerrar, plantillaInicial
   const [arDto, setArDto] = useState(ar0?.dto || "");
   const [arMarca, setArMarca] = useState(ar0?.marca || "—");
 
+  const [cantPorUnidad, setCantPorUnidad] = useState(inicial.cantidadPorUnidad || "");
   const [guardando, setGuardando] = useState(false);
 
   const handleGuardar = async () => {
@@ -4252,7 +4271,7 @@ function ModalEditarProducto({ producto, api, reload, onCerrar, plantillaInicial
       if (arRef && arBruto) {
         proveedores.aram = { ref: arRef, bruto: parseFloat(arBruto), dto: parseFloat(arDto) || 0, marca: arMarca };
       }
-      const body = { desc, familia, unidad, img, proveedores };
+      const body = { desc, familia, unidad, img, proveedores, cantidadPorUnidad: cantPorUnidad ? parseFloat(cantPorUnidad) : null };
 
       if (esValidacion) {
         // Validar pendiente: crea producto y marca pendiente como validado
@@ -4307,12 +4326,13 @@ function ModalEditarProducto({ producto, api, reload, onCerrar, plantillaInicial
               <label className="text-[10px] tracking-widest font-bold text-stone-700 mb-1 block">UNIDAD</label>
               <select value={unidad} onChange={(e) => setUnidad(e.target.value)}
                       className="w-full border-2 border-stone-900 p-2 text-xs focus:bg-amber-50 focus:outline-none font-mono">
-                <option value="uni">unidades</option>
-                <option value="m">metros</option>
-                <option value="kg">kilos</option>
-                <option value="L">litros</option>
-                <option value="caja">caja</option>
+                <option value="uni">unidad</option>
                 <option value="rollo">rollo</option>
+                <option value="barra">barra</option>
+                <option value="m">metro</option>
+                <option value="kg">kilo</option>
+                <option value="L">litro</option>
+                <option value="caja">caja</option>
                 <option value="par">par</option>
                 <option value="día">día</option>
               </select>
@@ -4327,6 +4347,19 @@ function ModalEditarProducto({ producto, api, reload, onCerrar, plantillaInicial
               </select>
             </div>
           </div>
+
+          {/* Cantidad por unidad — para rollos, barras, etc */}
+          {(unidad === "rollo" || unidad === "barra" || unidad === "caja") && (
+            <div>
+              <label className="text-[10px] tracking-widest font-bold text-stone-700 mb-1 block">
+                METROS / UNIDADES POR {unidad.toUpperCase()} <span className="font-normal opacity-60">(opcional, info para el operario)</span>
+              </label>
+              <input type="number" step="0.1" min="0" value={cantPorUnidad}
+                     onChange={(e) => setCantPorUnidad(e.target.value)}
+                     placeholder={unidad === "rollo" ? "ej: 50 (= 1 rollo de 50m)" : "ej: 6 (= 1 barra de 6m)"}
+                     className="w-full border-2 border-stone-900 p-2 text-sm focus:bg-amber-50 focus:outline-none font-mono" />
+            </div>
+          )}
 
           {/* Aquatubo */}
           <div className="border-2 border-emerald-700 bg-emerald-50 p-3">
