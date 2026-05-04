@@ -1589,7 +1589,7 @@ const TagProveedor = ({ tipo, size = "md" }) => {
 // =========================================================
 //  PANTALLA DE LOGIN
 // =========================================================
-function PantallaLogin({ onLogin }) {
+function PantallaLogin({ onLogin, onAdminClick }) {
   const [nombre, setNombre] = useState("");
   const [obraId, setObraId] = useState("");
   const [nombrePersonalizado, setNombrePersonalizado] = useState("");
@@ -1757,6 +1757,13 @@ function PantallaLogin({ onLogin }) {
         <div className="text-center text-[10px] text-stone-500 mt-4 tracking-widest">
           ARA CORPORATE · SISTEMA INTERNO DE PEDIDOS
         </div>
+
+        {onAdminClick && (
+          <button onClick={onAdminClick}
+                  className="mt-2 mx-auto block text-[10px] text-stone-400 hover:text-stone-700 tracking-widest">
+            🔐 ACCESO ADMIN
+          </button>
+        )}
       </div>
     </div>
   );
@@ -2875,12 +2882,1302 @@ function ModalProductoNoListado({ onCancelar, onAñadir }) {
 }
 
 // =========================================================
+//  PANEL ADMIN — acceso con PIN, gestión completa
+// =========================================================
+
+// Hook simple para llamar a la API admin con PIN
+function useAdminApi(pin) {
+  return {
+    async get(path) {
+      const r = await fetch(BACKEND_URL + path, { headers: { "X-Admin-Pin": pin } });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    },
+    async post(path, body) {
+      const r = await fetch(BACKEND_URL + path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Admin-Pin": pin },
+        body: JSON.stringify(body || {})
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    },
+    async put(path, body) {
+      const r = await fetch(BACKEND_URL + path, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "X-Admin-Pin": pin },
+        body: JSON.stringify(body || {})
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    },
+    async del(path) {
+      const r = await fetch(BACKEND_URL + path, {
+        method: "DELETE",
+        headers: { "X-Admin-Pin": pin }
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    }
+  };
+}
+
+// =========================================================
+//  PANTALLA LOGIN ADMIN — pide PIN
+// =========================================================
+function PantallaLoginAdmin({ onLogin, onSalir }) {
+  const [pin, setPin] = useState("");
+  const [error, setError] = useState("");
+  const [comprobando, setComprobando] = useState(false);
+
+  const handleEntrar = async () => {
+    if (pin.length < 4) return;
+    setComprobando(true);
+    setError("");
+    try {
+      const r = await fetch(BACKEND_URL + "/admin/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin })
+      });
+      if (!r.ok) {
+        setError("PIN incorrecto");
+        setPin("");
+      } else {
+        onLogin(pin);
+      }
+    } catch (e) {
+      setError("Error de conexión");
+    } finally {
+      setComprobando(false);
+    }
+  };
+
+  const teclaNumero = (n) => {
+    if (pin.length < 8) setPin(pin + n);
+  };
+  const borrarUlt = () => setPin(pin.slice(0, -1));
+
+  return (
+    <div className="min-h-screen bg-stone-900 flex items-center justify-center p-4 font-mono"
+         style={{ backgroundImage: "repeating-linear-gradient(45deg, transparent, transparent 30px, rgba(255,255,255,0.02) 30px, rgba(255,255,255,0.02) 31px)" }}>
+      <div className="w-full max-w-sm">
+        <div className="bg-red-600 border-4 border-stone-900 p-4 mb-3 shadow-[8px_8px_0_0_rgba(0,0,0,1)] text-white">
+          <div className="text-[10px] tracking-[0.3em] mb-2">ARA CORPORATE</div>
+          <h1 className="font-black text-3xl leading-none" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+            ACCESO ADMIN 🔐
+          </h1>
+        </div>
+
+        <div className="bg-stone-800 border-4 border-stone-900 p-5 shadow-[8px_8px_0_0_rgba(0,0,0,1)] space-y-4">
+          <div className="text-amber-400 text-xs tracking-widest font-bold">INTRODUCE PIN</div>
+
+          {/* Display PIN */}
+          <div className="bg-stone-900 border-2 border-amber-500 p-4 flex justify-center gap-3">
+            {[0,1,2,3,4,5,6,7].slice(0, Math.max(4, pin.length)).map(i => (
+              <div key={i} className={`w-3 h-3 rounded-full transition-all ${i < pin.length ? "bg-amber-400" : "bg-stone-700"}`} />
+            ))}
+          </div>
+
+          {error && <div className="text-red-400 text-xs font-bold text-center">{error}</div>}
+
+          {/* Teclado numérico */}
+          <div className="grid grid-cols-3 gap-2">
+            {[1,2,3,4,5,6,7,8,9].map(n => (
+              <button key={n} onClick={() => teclaNumero(String(n))}
+                      className="bg-stone-700 hover:bg-amber-500 hover:text-stone-900 text-amber-400 text-2xl font-black p-4 border-2 border-stone-900 transition-all"
+                      style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+                {n}
+              </button>
+            ))}
+            <button onClick={borrarUlt}
+                    className="bg-stone-700 hover:bg-red-600 text-amber-400 text-sm font-bold p-4 border-2 border-stone-900 transition-all">
+              ←
+            </button>
+            <button onClick={() => teclaNumero("0")}
+                    className="bg-stone-700 hover:bg-amber-500 hover:text-stone-900 text-amber-400 text-2xl font-black p-4 border-2 border-stone-900 transition-all"
+                    style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+              0
+            </button>
+            <button onClick={handleEntrar}
+                    disabled={pin.length < 4 || comprobando}
+                    className={`text-xs font-black tracking-widest p-4 border-2 border-stone-900 transition-all ${
+                      pin.length >= 4 && !comprobando
+                        ? "bg-amber-500 text-stone-900 hover:bg-amber-400"
+                        : "bg-stone-700 text-stone-500 cursor-not-allowed"
+                    }`}
+                    style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+              {comprobando ? "..." : "OK"}
+            </button>
+          </div>
+
+          <button onClick={onSalir}
+                  className="w-full text-stone-400 text-[10px] tracking-widest p-2 hover:text-amber-400">
+            ← VOLVER A APP OPERARIO
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// =========================================================
+//  PANEL ADMIN PRINCIPAL — todas las pestañas
+// =========================================================
+function PanelAdmin({ pin, onSalir }) {
+  const api = useAdminApi(pin);
+  const [data, setData] = useState(null);
+  const [pestaña, setPestaña] = useState("resumen");
+  const [recargando, setRecargando] = useState(false);
+
+  // Carga TODA la BBDD admin
+  const recargarTodo = async () => {
+    setRecargando(true);
+    try {
+      const all = await api.get("/admin/all");
+      setData(all);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setRecargando(false);
+    }
+  };
+
+  useEffect(() => { recargarTodo(); }, []);
+
+  if (!data) {
+    return (
+      <div className="min-h-screen bg-stone-100 flex items-center justify-center font-mono">
+        <div className="text-stone-500 text-sm">Cargando datos del sistema…</div>
+      </div>
+    );
+  }
+
+  const pestañas = [
+    { id: "resumen",   nombre: "RESUMEN",  icon: "📊" },
+    { id: "productos", nombre: "PRODUCTOS", icon: "📦" },
+    { id: "obras",     nombre: "OBRAS",    icon: "🏗" },
+    { id: "operarios", nombre: "OPERARIOS", icon: "👷" },
+    { id: "pedidos",   nombre: "PEDIDOS",  icon: "📋" },
+    { id: "config",    nombre: "CONFIG",   icon: "⚙️" },
+  ];
+
+  return (
+    <div className="min-h-screen bg-stone-100 font-mono"
+         style={{ backgroundImage: "repeating-linear-gradient(45deg, transparent, transparent 30px, rgba(0,0,0,0.02) 30px, rgba(0,0,0,0.02) 31px)" }}>
+
+      {/* Header */}
+      <header className="bg-stone-900 border-b-4 border-amber-500 sticky top-0 z-30 shadow-md">
+        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+          <div className="text-amber-400">
+            <div className="text-[9px] tracking-widest opacity-70">ARA CORPORATE</div>
+            <h1 className="font-black text-lg leading-none" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+              PANEL ADMIN 🔐
+            </h1>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={recargarTodo}
+                    disabled={recargando}
+                    className="bg-amber-500 text-stone-900 px-3 py-2 text-xs font-bold tracking-widest border-2 border-amber-500 hover:bg-amber-400 transition-all">
+              {recargando ? "…" : "↻ RECARGAR"}
+            </button>
+            <button onClick={onSalir}
+                    className="bg-red-600 text-white px-3 py-2 text-xs font-bold tracking-widest border-2 border-red-600 hover:bg-red-700 transition-all">
+              SALIR
+            </button>
+          </div>
+        </div>
+        {/* Pestañas */}
+        <div className="bg-stone-800 border-t-2 border-stone-700">
+          <div className="max-w-7xl mx-auto px-4 flex gap-0 overflow-x-auto">
+            {pestañas.map(p => (
+              <button key={p.id} onClick={() => setPestaña(p.id)}
+                      className={`shrink-0 px-4 py-3 text-xs font-bold tracking-widest transition-all border-r-2 border-stone-700 ${
+                        pestaña === p.id
+                          ? "bg-amber-500 text-stone-900"
+                          : "text-amber-400 hover:bg-stone-700"
+                      }`}>
+                <span className="mr-1">{p.icon}</span>{p.nombre}
+                {p.id === "resumen" && (data.productosPendientes?.filter(x => x.estado === "pendiente").length > 0 || data.obrasPendientes?.length > 0) && (
+                  <span className="ml-1 bg-red-600 text-white text-[9px] px-1.5 py-0.5 rounded-full">!</span>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      </header>
+
+      <div className="max-w-7xl mx-auto p-4">
+        {pestaña === "resumen"   && <PestañaResumen data={data} api={api} reload={recargarTodo} setPestaña={setPestaña} />}
+        {pestaña === "productos" && <PestañaProductos data={data} api={api} reload={recargarTodo} />}
+        {pestaña === "obras"     && <PestañaObras data={data} api={api} reload={recargarTodo} />}
+        {pestaña === "operarios" && <PestañaOperarios data={data} api={api} reload={recargarTodo} />}
+        {pestaña === "pedidos"   && <PestañaPedidos data={data} />}
+        {pestaña === "config"    && <PestañaConfig data={data} api={api} reload={recargarTodo} pin={pin} onSalir={onSalir} />}
+      </div>
+    </div>
+  );
+}
+
+// =========================================================
+//  PESTAÑA RESUMEN
+// =========================================================
+function PestañaResumen({ data, api, reload, setPestaña }) {
+  const pendientes = (data.productosPendientes || []).filter(p => p.estado === "pendiente");
+  const obrasPend = data.obrasPendientes || [];
+  const pedidos = data.pedidos || [];
+
+  // Calcular pedidos esta semana
+  const ahora = new Date();
+  const haceSiete = new Date(ahora.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const pedidosSemana = pedidos.filter(p => new Date(p.fecha) >= haceSiete);
+  const totalSemAqua = pedidosSemana.reduce((s, p) => s + (p.lineasAqua || []).reduce((a, l) => a + (l.importe || 0), 0), 0);
+  const totalSemAram = pedidosSemana.reduce((s, p) => s + (p.lineasAram || []).reduce((a, l) => a + (l.importe || 0), 0), 0);
+
+  // Productos más pedidos (top 5)
+  const contador = {};
+  pedidos.forEach(p => {
+    [...(p.lineasAqua || []), ...(p.lineasAram || [])].forEach(l => {
+      const k = l.desc;
+      contador[k] = (contador[k] || 0) + l.cantidad;
+    });
+  });
+  const topProductos = Object.entries(contador).sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+  return (
+    <div className="space-y-4">
+      {/* Pendientes */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="bg-white border-2 border-stone-900 shadow-[4px_4px_0_0_rgba(0,0,0,1)]">
+          <div className="bg-amber-500 border-b-2 border-stone-900 p-3 flex items-center justify-between">
+            <div className="font-black tracking-wider" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+              🆕 PRODUCTOS NO LISTADOS
+            </div>
+            <span className="bg-stone-900 text-amber-400 text-xs px-2 py-0.5 font-bold">{pendientes.length}</span>
+          </div>
+          <div className="p-3 max-h-64 overflow-y-auto">
+            {pendientes.length === 0 ? (
+              <div className="text-xs text-stone-500 italic text-center py-4">Sin solicitudes pendientes</div>
+            ) : (
+              <div className="space-y-2">
+                {pendientes.slice(0, 5).map(p => (
+                  <div key={p.id} className="border-2 border-stone-200 p-2 text-xs">
+                    <div className="font-bold">{p.desc}</div>
+                    <div className="text-[10px] text-stone-500 mt-0.5">
+                      {p.cantidad} {p.unidad} · {p.pedidoPor} · {p.obra?.nombre || "—"}
+                    </div>
+                  </div>
+                ))}
+                {pendientes.length > 5 && (
+                  <button onClick={() => setPestaña("productos")} className="w-full text-xs font-bold text-stone-700 underline">
+                    Ver todos ({pendientes.length}) →
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="bg-white border-2 border-stone-900 shadow-[4px_4px_0_0_rgba(0,0,0,1)]">
+          <div className="bg-amber-500 border-b-2 border-stone-900 p-3 flex items-center justify-between">
+            <div className="font-black tracking-wider" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+              🏗 OBRAS NUEVAS
+            </div>
+            <span className="bg-stone-900 text-amber-400 text-xs px-2 py-0.5 font-bold">{obrasPend.length}</span>
+          </div>
+          <div className="p-3 max-h-64 overflow-y-auto">
+            {obrasPend.length === 0 ? (
+              <div className="text-xs text-stone-500 italic text-center py-4">Sin obras nuevas pendientes</div>
+            ) : (
+              <div className="space-y-2">
+                {obrasPend.slice(0, 5).map(o => (
+                  <div key={o.id} className="border-2 border-stone-200 p-2 text-xs">
+                    <div className="font-bold">{o.nombre}</div>
+                    <div className="text-[10px] text-stone-500 mt-0.5">
+                      {o.dir || "Sin dirección"} · creada por {o.creadaPor}
+                    </div>
+                  </div>
+                ))}
+                {obrasPend.length > 5 && (
+                  <button onClick={() => setPestaña("obras")} className="w-full text-xs font-bold text-stone-700 underline">
+                    Ver todas ({obrasPend.length}) →
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Stats semana */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <StatCard titulo="PEDIDOS 7D" valor={pedidosSemana.length} sub="esta semana" />
+        <StatCard titulo="GASTO 7D AQUA" valor={"€" + totalSemAqua.toFixed(0)} sub={`base imp. (€${(totalSemAqua * 1.21).toFixed(0)} c/IVA)`} color="emerald" />
+        <StatCard titulo="GASTO 7D ARAM" valor={"€" + totalSemAram.toFixed(0)} sub={`base imp. (€${(totalSemAram * 1.21).toFixed(0)} c/IVA)`} color="amber" />
+        <StatCard titulo="TOTAL PEDIDOS" valor={pedidos.length} sub="histórico" />
+      </div>
+
+      {/* Top productos */}
+      {topProductos.length > 0 && (
+        <div className="bg-white border-2 border-stone-900 shadow-[4px_4px_0_0_rgba(0,0,0,1)]">
+          <div className="bg-stone-900 text-amber-400 border-b-2 border-stone-900 p-3 font-black tracking-wider"
+               style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+            🏆 PRODUCTOS MÁS PEDIDOS
+          </div>
+          <div className="divide-y-2 divide-stone-100">
+            {topProductos.map(([desc, cant], i) => (
+              <div key={desc} className="p-3 flex items-center gap-3">
+                <div className="w-8 text-xl font-black text-amber-500">#{i + 1}</div>
+                <div className="flex-1 text-xs font-bold">{desc}</div>
+                <div className="text-sm font-mono">{cant}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StatCard({ titulo, valor, sub, color }) {
+  const bg = color === "emerald" ? "bg-emerald-50 border-emerald-700" :
+             color === "amber" ? "bg-amber-50 border-amber-700" :
+             "bg-white border-stone-900";
+  return (
+    <div className={`border-2 ${bg} p-3 shadow-[4px_4px_0_0_rgba(0,0,0,1)]`}>
+      <div className="text-[10px] tracking-widest text-stone-500 mb-1">{titulo}</div>
+      <div className="font-black text-2xl text-stone-900" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>{valor}</div>
+      <div className="text-[10px] text-stone-500 mt-1">{sub}</div>
+    </div>
+  );
+}
+
+// =========================================================
+//  PESTAÑA PRODUCTOS — gestión catálogo + validar pendientes
+// =========================================================
+function PestañaProductos({ data, api, reload }) {
+  const [editando, setEditando] = useState(null); // producto que se está editando
+  const [añadiendo, setAñadiendo] = useState(false);
+  const [busq, setBusq] = useState("");
+  const [validando, setValidando] = useState(null); // pendiente que se valida
+
+  const productos = (data.productos || []).filter(p =>
+    busq === "" ||
+    p.desc.toLowerCase().includes(busq.toLowerCase()) ||
+    (p.proveedores?.aqua?.ref || "").toLowerCase().includes(busq.toLowerCase()) ||
+    (p.proveedores?.aram?.ref || "").toLowerCase().includes(busq.toLowerCase())
+  );
+
+  const pendientes = (data.productosPendientes || []).filter(p => p.estado === "pendiente");
+
+  const handleBorrar = async (id) => {
+    if (!confirm("¿Borrar este producto del catálogo? No afecta a pedidos ya hechos.")) return;
+    await api.del("/admin/producto/" + id);
+    reload();
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Productos pendientes de validar */}
+      {pendientes.length > 0 && (
+        <div className="bg-amber-100 border-2 border-amber-700 p-3">
+          <div className="font-bold text-sm text-amber-900 mb-2">
+            🆕 {pendientes.length} producto{pendientes.length>1?"s":""} no listado{pendientes.length>1?"s":""} pedido{pendientes.length>1?"s":""} por operarios
+          </div>
+          <div className="space-y-2">
+            {pendientes.map(p => (
+              <div key={p.id} className="bg-white border border-amber-700 p-2 flex items-start justify-between gap-2 text-xs">
+                <div className="flex-1">
+                  <div className="font-bold">{p.desc}</div>
+                  <div className="text-[10px] text-stone-500 mt-0.5">
+                    {p.cantidad} {p.unidad} · pedido por {p.pedidoPor} · obra: {p.obra?.nombre || "—"}
+                    {p.proveedor !== "indistinto" && <> · prefiere <strong>{p.proveedor === "aqua" ? "Aquatubo" : "Aramburu"}</strong></>}
+                  </div>
+                </div>
+                <button onClick={() => setValidando(p)}
+                        className="text-[10px] font-bold bg-emerald-700 text-white px-2 py-1 border border-stone-900 hover:bg-emerald-800">
+                  ✓ AÑADIR AL CATÁLOGO
+                </button>
+                <button onClick={async () => {
+                          if (!confirm("¿Descartar esta solicitud sin añadirla al catálogo?")) return;
+                          await api.post("/admin/pendiente/" + p.id + "/descartar");
+                          reload();
+                        }}
+                        className="text-[10px] font-bold bg-stone-200 text-stone-900 px-2 py-1 border border-stone-900 hover:bg-stone-300">
+                  ✗
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Buscador + botón añadir */}
+      <div className="flex gap-2">
+        <div className="relative flex-1">
+          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
+          <input type="text" placeholder="Buscar por descripción o referencia…"
+                 value={busq} onChange={(e) => setBusq(e.target.value)}
+                 className="w-full pl-10 pr-3 py-2 border-2 border-stone-900 bg-white text-sm focus:outline-none focus:bg-amber-50 font-mono" />
+        </div>
+        <button onClick={() => setAñadiendo(true)}
+                className="bg-stone-900 text-amber-400 px-4 py-2 text-xs font-black tracking-widest border-2 border-stone-900 hover:bg-amber-400 hover:text-stone-900"
+                style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+          + NUEVO
+        </button>
+      </div>
+
+      <div className="text-[10px] text-stone-500 tracking-widest">
+        {productos.length} de {data.productos.length} productos
+      </div>
+
+      {/* Tabla productos */}
+      <div className="bg-white border-2 border-stone-900 overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead className="bg-stone-900 text-amber-400">
+            <tr>
+              <th className="p-2 text-left">FAMILIA</th>
+              <th className="p-2 text-left">DESCRIPCIÓN</th>
+              <th className="p-2 text-left">REF AQUA</th>
+              <th className="p-2 text-right">€ AQUA</th>
+              <th className="p-2 text-left">REF ARAM</th>
+              <th className="p-2 text-right">€ ARAM</th>
+              <th className="p-2"></th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-stone-200">
+            {productos.slice(0, 100).map(p => {
+              const aq = p.proveedores?.aqua;
+              const ar = p.proveedores?.aram;
+              const netoA = aq ? +(aq.bruto * (1 - aq.dto / 100)).toFixed(2) : null;
+              const netoR = ar ? +(ar.bruto * (1 - ar.dto / 100)).toFixed(2) : null;
+              return (
+                <tr key={p.id} className="hover:bg-amber-50">
+                  <td className="p-2 text-[10px] text-stone-500">{p.familia}</td>
+                  <td className="p-2 font-bold">{p.desc}</td>
+                  <td className="p-2 font-mono text-[10px]">{aq?.ref || "—"}</td>
+                  <td className="p-2 text-right font-mono">{netoA ? "€" + netoA : "—"}</td>
+                  <td className="p-2 font-mono text-[10px]">{ar?.ref || "—"}</td>
+                  <td className="p-2 text-right font-mono">{netoR ? "€" + netoR : "—"}</td>
+                  <td className="p-2 text-right whitespace-nowrap">
+                    <button onClick={() => setEditando(p)}
+                            className="text-[10px] font-bold bg-amber-500 text-stone-900 px-2 py-1 border border-stone-900 hover:bg-amber-400 mr-1">
+                      ✏ EDITAR
+                    </button>
+                    <button onClick={() => handleBorrar(p.id)}
+                            className="text-[10px] font-bold bg-red-600 text-white px-2 py-1 border border-stone-900 hover:bg-red-700">
+                      🗑
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {productos.length > 100 && (
+          <div className="p-3 text-xs text-stone-500 text-center bg-stone-50">
+            Mostrando los primeros 100 de {productos.length}. Usa el buscador para filtrar.
+          </div>
+        )}
+      </div>
+
+      {/* Modales */}
+      {editando && (
+        <ModalEditarProducto producto={editando} api={api} reload={reload} onCerrar={() => setEditando(null)} />
+      )}
+      {añadiendo && (
+        <ModalEditarProducto producto={null} api={api} reload={reload} onCerrar={() => setAñadiendo(false)} />
+      )}
+      {validando && (
+        <ModalEditarProducto
+          producto={null}
+          api={api}
+          reload={reload}
+          onCerrar={() => setValidando(null)}
+          plantillaInicial={{
+            desc: validando.desc,
+            familia: "Varios",
+            unidad: validando.unidad,
+            img: "tapon"
+          }}
+          esValidacion={validando}
+        />
+      )}
+    </div>
+  );
+}
+
+// Modal para crear/editar/validar producto
+function ModalEditarProducto({ producto, api, reload, onCerrar, plantillaInicial, esValidacion }) {
+  const inicial = producto || plantillaInicial || { desc: "", familia: "Varios", unidad: "uni", img: "tapon" };
+  const [desc, setDesc] = useState(inicial.desc || "");
+  const [familia, setFamilia] = useState(inicial.familia || "Varios");
+  const [unidad, setUnidad] = useState(inicial.unidad || "uni");
+  const [img, setImg] = useState(inicial.img || "tapon");
+
+  const aq0 = inicial.proveedores?.aqua;
+  const [aqRef, setAqRef] = useState(aq0?.ref || "");
+  const [aqBruto, setAqBruto] = useState(aq0?.bruto || "");
+  const [aqDto, setAqDto] = useState(aq0?.dto || "");
+  const [aqMarca, setAqMarca] = useState(aq0?.marca || "—");
+
+  const ar0 = inicial.proveedores?.aram;
+  const [arRef, setArRef] = useState(ar0?.ref || "");
+  const [arBruto, setArBruto] = useState(ar0?.bruto || "");
+  const [arDto, setArDto] = useState(ar0?.dto || "");
+  const [arMarca, setArMarca] = useState(ar0?.marca || "—");
+
+  const [guardando, setGuardando] = useState(false);
+
+  const handleGuardar = async () => {
+    if (!desc.trim()) return alert("La descripción es obligatoria");
+    setGuardando(true);
+    try {
+      const proveedores = {};
+      if (aqRef && aqBruto) {
+        proveedores.aqua = { ref: aqRef, bruto: parseFloat(aqBruto), dto: parseFloat(aqDto) || 0, marca: aqMarca };
+      }
+      if (arRef && arBruto) {
+        proveedores.aram = { ref: arRef, bruto: parseFloat(arBruto), dto: parseFloat(arDto) || 0, marca: arMarca };
+      }
+      const body = { desc, familia, unidad, img, proveedores };
+
+      if (esValidacion) {
+        // Validar pendiente: crea producto y marca pendiente como validado
+        await api.post("/admin/pendiente/" + esValidacion.id + "/validar", body);
+      } else if (producto) {
+        await api.put("/admin/producto/" + producto.id, body);
+      } else {
+        await api.post("/admin/producto", body);
+      }
+      reload();
+      onCerrar();
+    } catch (e) {
+      alert("Error: " + e.message);
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  const aqNeto = aqBruto ? +(parseFloat(aqBruto) * (1 - (parseFloat(aqDto) || 0) / 100)).toFixed(4) : null;
+  const arNeto = arBruto ? +(parseFloat(arBruto) * (1 - (parseFloat(arDto) || 0) / 100)).toFixed(4) : null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="absolute inset-0 bg-stone-900/50" onClick={onCerrar} />
+      <div className="relative bg-white border-4 border-stone-900 w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-[8px_8px_0_0_rgba(0,0,0,1)]">
+        <div className="bg-amber-500 border-b-4 border-stone-900 p-3 flex items-center justify-between sticky top-0 z-10">
+          <h3 className="font-black text-base" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+            {esValidacion ? "✓ VALIDAR Y AÑADIR" : producto ? "✏ EDITAR PRODUCTO" : "+ NUEVO PRODUCTO"}
+          </h3>
+          <button onClick={onCerrar} className="bg-stone-900 text-amber-400 p-1.5 border-2 border-stone-900">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="p-4 space-y-3">
+          <div>
+            <label className="text-[10px] tracking-widest font-bold text-stone-700 mb-1 block">DESCRIPCIÓN</label>
+            <input type="text" value={desc} onChange={(e) => setDesc(e.target.value)}
+                   className="w-full border-2 border-stone-900 p-2 text-sm focus:bg-amber-50 focus:outline-none font-mono" />
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <label className="text-[10px] tracking-widest font-bold text-stone-700 mb-1 block">FAMILIA</label>
+              <select value={familia} onChange={(e) => setFamilia(e.target.value)}
+                      className="w-full border-2 border-stone-900 p-2 text-xs focus:bg-amber-50 focus:outline-none font-mono">
+                {FAMILIAS.filter(f => f.nombre !== "Todo").map(f => (
+                  <option key={f.nombre} value={f.nombre}>{f.nombre}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] tracking-widest font-bold text-stone-700 mb-1 block">UNIDAD</label>
+              <select value={unidad} onChange={(e) => setUnidad(e.target.value)}
+                      className="w-full border-2 border-stone-900 p-2 text-xs focus:bg-amber-50 focus:outline-none font-mono">
+                <option value="uni">unidades</option>
+                <option value="m">metros</option>
+                <option value="kg">kilos</option>
+                <option value="L">litros</option>
+                <option value="caja">caja</option>
+                <option value="rollo">rollo</option>
+                <option value="par">par</option>
+                <option value="día">día</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] tracking-widest font-bold text-stone-700 mb-1 block">IMAGEN</label>
+              <select value={img} onChange={(e) => setImg(e.target.value)}
+                      className="w-full border-2 border-stone-900 p-2 text-xs focus:bg-amber-50 focus:outline-none font-mono">
+                {["valvula","fitting","te","codo","machon","tapon","reduccion","filtro","tubo-pex","tubo-pe","tubo-pvc","te-pvc","codo-pvc","reduc-pvc","electro","cobre","mcap","bateria","latiguillo","aislamiento","abrazadera"].map(t => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Aquatubo */}
+          <div className="border-2 border-emerald-700 bg-emerald-50 p-3">
+            <div className="font-black text-sm text-emerald-900 mb-2" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+              🟢 AQUATUBO {!aqRef && <span className="text-[10px] font-normal opacity-60">(opcional)</span>}
+            </div>
+            <div className="grid grid-cols-4 gap-2">
+              <div>
+                <label className="text-[10px] font-bold text-stone-700 mb-1 block">REF</label>
+                <input type="text" value={aqRef} onChange={(e) => setAqRef(e.target.value)}
+                       className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:bg-white focus:outline-none" />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-stone-700 mb-1 block">BRUTO €</label>
+                <input type="number" step="0.001" value={aqBruto} onChange={(e) => setAqBruto(e.target.value)}
+                       className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:bg-white focus:outline-none" />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-stone-700 mb-1 block">DTO %</label>
+                <input type="number" step="0.01" value={aqDto} onChange={(e) => setAqDto(e.target.value)}
+                       className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:bg-white focus:outline-none" />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-stone-700 mb-1 block">MARCA</label>
+                <input type="text" value={aqMarca} onChange={(e) => setAqMarca(e.target.value)}
+                       className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:bg-white focus:outline-none" />
+              </div>
+            </div>
+            {aqNeto !== null && (
+              <div className="mt-2 text-xs font-bold text-emerald-900">
+                Precio neto = €{aqNeto}/{unidad}
+              </div>
+            )}
+          </div>
+
+          {/* Aramburu */}
+          <div className="border-2 border-amber-700 bg-amber-50 p-3">
+            <div className="font-black text-sm text-amber-900 mb-2" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+              🟡 ARAMBURU {!arRef && <span className="text-[10px] font-normal opacity-60">(opcional)</span>}
+            </div>
+            <div className="grid grid-cols-4 gap-2">
+              <div>
+                <label className="text-[10px] font-bold text-stone-700 mb-1 block">REF</label>
+                <input type="text" value={arRef} onChange={(e) => setArRef(e.target.value)}
+                       className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:bg-white focus:outline-none" />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-stone-700 mb-1 block">BRUTO €</label>
+                <input type="number" step="0.001" value={arBruto} onChange={(e) => setArBruto(e.target.value)}
+                       className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:bg-white focus:outline-none" />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-stone-700 mb-1 block">DTO %</label>
+                <input type="number" step="0.01" value={arDto} onChange={(e) => setArDto(e.target.value)}
+                       className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:bg-white focus:outline-none" />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-stone-700 mb-1 block">MARCA</label>
+                <input type="text" value={arMarca} onChange={(e) => setArMarca(e.target.value)}
+                       className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:bg-white focus:outline-none" />
+              </div>
+            </div>
+            {arNeto !== null && (
+              <div className="mt-2 text-xs font-bold text-amber-900">
+                Precio neto = €{arNeto}/{unidad}
+              </div>
+            )}
+          </div>
+
+          <div className="flex gap-2 pt-2 border-t-2 border-stone-200">
+            <button onClick={onCerrar}
+                    className="flex-1 text-xs font-bold tracking-widest p-3 border-2 border-stone-900 bg-white hover:bg-stone-100">
+              CANCELAR
+            </button>
+            <button onClick={handleGuardar} disabled={guardando}
+                    className={`flex-[2] text-xs font-black tracking-widest p-3 border-2 border-stone-900 transition-all ${
+                      guardando ? "bg-stone-300 text-stone-600 cursor-wait" : "bg-stone-900 text-amber-400 hover:bg-amber-400 hover:text-stone-900"
+                    }`}
+                    style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+              {guardando ? "GUARDANDO…" : esValidacion ? "✓ VALIDAR Y AÑADIR" : "💾 GUARDAR"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// =========================================================
+//  PESTAÑA OBRAS
+// =========================================================
+function PestañaObras({ data, api, reload }) {
+  const [añadiendo, setAñadiendo] = useState(false);
+  const [editando, setEditando] = useState(null);
+
+  const obras = data.obras || [];
+
+  const handleValidar = async (o) => {
+    await api.put("/admin/obra/" + o.id, { pendienteValidar: false });
+    reload();
+  };
+  const handleBorrar = async (o) => {
+    if (!confirm(`¿Borrar la obra "${o.nombre}"? Los pedidos hechos a esta obra no se borran.`)) return;
+    await api.del("/admin/obra/" + o.id);
+    reload();
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <div className="text-xs tracking-widest text-stone-700">{obras.length} OBRAS</div>
+        <button onClick={() => setAñadiendo(true)}
+                className="bg-stone-900 text-amber-400 px-4 py-2 text-xs font-black tracking-widest border-2 border-stone-900 hover:bg-amber-400 hover:text-stone-900"
+                style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+          + NUEVA OBRA
+        </button>
+      </div>
+
+      <div className="bg-white border-2 border-stone-900 divide-y divide-stone-200">
+        {obras.map(o => (
+          <div key={o.id} className="p-3 flex items-start justify-between gap-3 hover:bg-amber-50">
+            <div className="flex-1 min-w-0">
+              <div className="font-bold text-sm flex items-center gap-2">
+                {o.nombre}
+                {o.pendienteValidar && (
+                  <span className="text-[9px] bg-amber-500 text-stone-900 px-1.5 py-0.5 font-bold border border-stone-900">PENDIENTE VALIDAR</span>
+                )}
+                {o.activa === false && (
+                  <span className="text-[9px] bg-red-600 text-white px-1.5 py-0.5 font-bold">INACTIVA</span>
+                )}
+              </div>
+              <div className="text-[10px] text-stone-500 mt-0.5">
+                {o.dir || "Sin dirección"}
+                {o.creadaPor && <> · creada por <strong>{o.creadaPor}</strong></>}
+                {o.creadaEn && <> · {new Date(o.creadaEn).toLocaleDateString("es-ES")}</>}
+              </div>
+            </div>
+            <div className="flex gap-1">
+              {o.pendienteValidar && (
+                <button onClick={() => handleValidar(o)}
+                        className="text-[10px] font-bold bg-emerald-700 text-white px-2 py-1 border border-stone-900 hover:bg-emerald-800">
+                  ✓ VALIDAR
+                </button>
+              )}
+              <button onClick={() => setEditando(o)}
+                      className="text-[10px] font-bold bg-amber-500 text-stone-900 px-2 py-1 border border-stone-900 hover:bg-amber-400">
+                ✏
+              </button>
+              <button onClick={() => handleBorrar(o)}
+                      className="text-[10px] font-bold bg-red-600 text-white px-2 py-1 border border-stone-900 hover:bg-red-700">
+                🗑
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {añadiendo && <ModalEditarObra obra={null} api={api} reload={reload} onCerrar={() => setAñadiendo(false)} />}
+      {editando && <ModalEditarObra obra={editando} api={api} reload={reload} onCerrar={() => setEditando(null)} />}
+    </div>
+  );
+}
+
+function ModalEditarObra({ obra, api, reload, onCerrar }) {
+  const [nombre, setNombre] = useState(obra?.nombre || "");
+  const [dir, setDir] = useState(obra?.dir || "");
+  const [activa, setActiva] = useState(obra?.activa !== false);
+  const [guardando, setGuardando] = useState(false);
+
+  const handleGuardar = async () => {
+    if (!nombre.trim()) return alert("El nombre es obligatorio");
+    setGuardando(true);
+    try {
+      if (obra) {
+        await api.put("/admin/obra/" + obra.id, { nombre, dir, activa, pendienteValidar: false });
+      } else {
+        await api.post("/admin/obra", { nombre, dir });
+      }
+      reload();
+      onCerrar();
+    } catch (e) {
+      alert("Error: " + e.message);
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="absolute inset-0 bg-stone-900/50" onClick={onCerrar} />
+      <div className="relative bg-white border-4 border-stone-900 w-full max-w-md shadow-[8px_8px_0_0_rgba(0,0,0,1)]">
+        <div className="bg-amber-500 border-b-4 border-stone-900 p-3 flex items-center justify-between">
+          <h3 className="font-black text-base" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+            {obra ? "✏ EDITAR OBRA" : "+ NUEVA OBRA"}
+          </h3>
+          <button onClick={onCerrar} className="bg-stone-900 text-amber-400 p-1.5 border-2 border-stone-900">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="p-4 space-y-3">
+          <div>
+            <label className="text-[10px] tracking-widest font-bold text-stone-700 mb-1 block">NOMBRE</label>
+            <input type="text" value={nombre} onChange={(e) => setNombre(e.target.value)}
+                   className="w-full border-2 border-stone-900 p-2 text-sm focus:bg-amber-50 focus:outline-none font-mono" />
+          </div>
+          <div>
+            <label className="text-[10px] tracking-widest font-bold text-stone-700 mb-1 block">DIRECCIÓN</label>
+            <input type="text" value={dir} onChange={(e) => setDir(e.target.value)}
+                   className="w-full border-2 border-stone-900 p-2 text-sm focus:bg-amber-50 focus:outline-none font-mono" />
+          </div>
+          {obra && (
+            <label className="flex items-center gap-2 text-xs">
+              <input type="checkbox" checked={activa} onChange={(e) => setActiva(e.target.checked)} />
+              <span>Obra activa (visible para operarios)</span>
+            </label>
+          )}
+          <div className="flex gap-2 pt-2 border-t-2 border-stone-200">
+            <button onClick={onCerrar}
+                    className="flex-1 text-xs font-bold tracking-widest p-3 border-2 border-stone-900 bg-white hover:bg-stone-100">
+              CANCELAR
+            </button>
+            <button onClick={handleGuardar} disabled={guardando}
+                    className={`flex-[2] text-xs font-black tracking-widest p-3 border-2 border-stone-900 transition-all ${
+                      guardando ? "bg-stone-300 cursor-wait" : "bg-stone-900 text-amber-400 hover:bg-amber-400 hover:text-stone-900"
+                    }`}
+                    style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+              {guardando ? "..." : "💾 GUARDAR"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// =========================================================
+//  PESTAÑA OPERARIOS
+// =========================================================
+function PestañaOperarios({ data, api, reload }) {
+  const [nombre, setNombre] = useState("");
+  const [añadiendo, setAñadiendo] = useState(false);
+
+  const operarios = data.operarios || [];
+
+  const handleAdd = async () => {
+    if (!nombre.trim() || nombre === "Otro (escribir nombre)") return;
+    setAñadiendo(true);
+    try {
+      await api.post("/admin/operario", { nombre: nombre.trim(), activo: true });
+      setNombre("");
+      reload();
+    } finally {
+      setAñadiendo(false);
+    }
+  };
+  const handleToggle = async (op) => {
+    await api.put("/admin/operario/" + op.id, { activo: !op.activo });
+    reload();
+  };
+  const handleDelete = async (op) => {
+    if (!confirm(`¿Borrar a "${op.nombre}"?`)) return;
+    await api.del("/admin/operario/" + op.id);
+    reload();
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white border-2 border-stone-900 p-3">
+        <div className="text-[10px] tracking-widest font-bold text-stone-700 mb-2">AÑADIR OPERARIO</div>
+        <div className="flex gap-2">
+          <input type="text" value={nombre} onChange={(e) => setNombre(e.target.value)}
+                 placeholder="Nombre completo del operario"
+                 onKeyDown={(e) => e.key === "Enter" && handleAdd()}
+                 className="flex-1 border-2 border-stone-900 p-2 text-sm focus:bg-amber-50 focus:outline-none font-mono" />
+          <button onClick={handleAdd} disabled={añadiendo || nombre.trim().length < 2}
+                  className={`px-4 py-2 text-xs font-black tracking-widest border-2 border-stone-900 ${
+                    añadiendo || nombre.trim().length < 2
+                      ? "bg-stone-200 text-stone-400 cursor-not-allowed"
+                      : "bg-stone-900 text-amber-400 hover:bg-amber-400 hover:text-stone-900"
+                  }`}
+                  style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+            + AÑADIR
+          </button>
+        </div>
+      </div>
+
+      <div className="bg-white border-2 border-stone-900 divide-y divide-stone-200">
+        {operarios.map(op => (
+          <div key={op.id} className="p-3 flex items-center justify-between gap-3 hover:bg-amber-50">
+            <div className="flex-1">
+              <div className="font-bold text-sm">{op.nombre}</div>
+              <div className="text-[10px] text-stone-500">
+                {op.activo === false ? <span className="text-red-700">INACTIVO</span> : "Activo"}
+              </div>
+            </div>
+            <button onClick={() => handleToggle(op)}
+                    className="text-[10px] font-bold bg-amber-500 text-stone-900 px-2 py-1 border border-stone-900 hover:bg-amber-400">
+              {op.activo === false ? "✓ ACTIVAR" : "⏸ DESACTIVAR"}
+            </button>
+            <button onClick={() => handleDelete(op)}
+                    className="text-[10px] font-bold bg-red-600 text-white px-2 py-1 border border-stone-900 hover:bg-red-700">
+              🗑
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// =========================================================
+//  PESTAÑA PEDIDOS
+// =========================================================
+function PestañaPedidos({ data }) {
+  const [filtroObra, setFiltroObra] = useState("");
+  const [filtroOp, setFiltroOp] = useState("");
+  const [pedidoSel, setPedidoSel] = useState(null);
+
+  const pedidos = (data.pedidos || []).slice().reverse(); // más reciente primero
+
+  const filtrados = pedidos.filter(p => {
+    if (filtroObra && p.obra?.id !== filtroObra) return false;
+    if (filtroOp && p.operario !== filtroOp) return false;
+    return true;
+  });
+
+  const totalFiltrados = filtrados.reduce((s, p) =>
+    s + (p.lineasAqua || []).reduce((a, l) => a + (l.importe || 0), 0)
+      + (p.lineasAram || []).reduce((a, l) => a + (l.importe || 0), 0), 0);
+
+  return (
+    <div className="space-y-4">
+      {/* Filtros */}
+      <div className="bg-white border-2 border-stone-900 p-3 grid grid-cols-1 md:grid-cols-2 gap-2">
+        <select value={filtroObra} onChange={(e) => setFiltroObra(e.target.value)}
+                className="border-2 border-stone-900 p-2 text-xs focus:bg-amber-50 focus:outline-none font-mono">
+          <option value="">— Todas las obras —</option>
+          {(data.obras || []).map(o => <option key={o.id} value={o.id}>{o.nombre}</option>)}
+        </select>
+        <select value={filtroOp} onChange={(e) => setFiltroOp(e.target.value)}
+                className="border-2 border-stone-900 p-2 text-xs focus:bg-amber-50 focus:outline-none font-mono">
+          <option value="">— Todos los operarios —</option>
+          {(data.operarios || []).map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>)}
+        </select>
+      </div>
+
+      {/* Stats */}
+      <div className="bg-stone-900 text-amber-400 p-3 border-2 border-stone-900 flex items-center justify-between">
+        <div>
+          <div className="text-[10px] tracking-widest opacity-70">PEDIDOS MOSTRADOS</div>
+          <div className="font-black text-xl" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>{filtrados.length}</div>
+        </div>
+        <div className="text-right">
+          <div className="text-[10px] tracking-widest opacity-70">TOTAL BASE</div>
+          <div className="font-black text-xl" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>€{totalFiltrados.toFixed(2)}</div>
+        </div>
+      </div>
+
+      {/* Lista */}
+      <div className="bg-white border-2 border-stone-900 divide-y divide-stone-200">
+        {filtrados.length === 0 ? (
+          <div className="p-8 text-center text-stone-500 text-sm">No hay pedidos que mostrar</div>
+        ) : filtrados.slice(0, 200).map(p => {
+          const totA = (p.lineasAqua || []).reduce((s, l) => s + (l.importe || 0), 0);
+          const totR = (p.lineasAram || []).reduce((s, l) => s + (l.importe || 0), 0);
+          return (
+            <button key={p.id} onClick={() => setPedidoSel(p)}
+                    className="w-full text-left p-3 hover:bg-amber-50 transition-all">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex-1 min-w-0">
+                  <div className="font-bold text-sm">{p.obra?.nombre || "—"}</div>
+                  <div className="text-[10px] text-stone-500 mt-0.5">
+                    {new Date(p.fecha).toLocaleDateString("es-ES", { dateStyle: "long" })} · {p.operario}
+                  </div>
+                  <div className="text-[10px] mt-1 flex gap-2 flex-wrap">
+                    {totA > 0 && <span className="bg-emerald-100 text-emerald-900 px-1.5 py-0.5 font-bold">Aqua €{totA.toFixed(2)}</span>}
+                    {totR > 0 && <span className="bg-amber-100 text-amber-900 px-1.5 py-0.5 font-bold">Aram €{totR.toFixed(2)}</span>}
+                    {(p.lineasNoListado || []).length > 0 && <span className="bg-stone-200 text-stone-700 px-1.5 py-0.5 font-bold">+{p.lineasNoListado.length} no list.</span>}
+                  </div>
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="font-black text-base" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>€{((totA + totR) * 1.21).toFixed(2)}</div>
+                  <div className="text-[9px] text-stone-500">IVA inc.</div>
+                </div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {pedidoSel && <ModalDetallePedido pedido={pedidoSel} onCerrar={() => setPedidoSel(null)} />}
+    </div>
+  );
+}
+
+function ModalDetallePedido({ pedido, onCerrar }) {
+  const totA = (pedido.lineasAqua || []).reduce((s, l) => s + (l.importe || 0), 0);
+  const totR = (pedido.lineasAram || []).reduce((s, l) => s + (l.importe || 0), 0);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="absolute inset-0 bg-stone-900/50" onClick={onCerrar} />
+      <div className="relative bg-white border-4 border-stone-900 w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-[8px_8px_0_0_rgba(0,0,0,1)]">
+        <div className="bg-amber-500 border-b-4 border-stone-900 p-3 flex items-center justify-between sticky top-0 z-10">
+          <div>
+            <h3 className="font-black text-base" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+              PEDIDO {pedido.id}
+            </h3>
+            <div className="text-[10px]">{new Date(pedido.fecha).toLocaleString("es-ES")}</div>
+          </div>
+          <button onClick={onCerrar} className="bg-stone-900 text-amber-400 p-1.5 border-2 border-stone-900">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="p-4 space-y-3 text-sm">
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <div><strong>Obra:</strong> {pedido.obra?.nombre}</div>
+            <div><strong>Solicita:</strong> {pedido.operario}</div>
+            <div className="col-span-2 text-[10px] text-stone-500">{pedido.obra?.dir}</div>
+          </div>
+
+          {pedido.lineasAqua?.length > 0 && (
+            <div className="border-2 border-emerald-700">
+              <div className="bg-emerald-700 text-white p-2 text-xs font-bold tracking-widest">AQUATUBO · €{totA.toFixed(2)}</div>
+              <div className="divide-y">
+                {pedido.lineasAqua.map((l, i) => (
+                  <div key={i} className="p-2 text-xs flex justify-between gap-2">
+                    <div className="flex-1">
+                      <div className="font-mono text-[10px] text-stone-500">{l.ref}</div>
+                      <div>{l.desc}</div>
+                    </div>
+                    <div className="text-right shrink-0 font-mono">
+                      <div>{l.cantidad} × €{l.precioUnit?.toFixed(2)}</div>
+                      <div className="font-bold">€{l.importe?.toFixed(2)}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {pedido.lineasAram?.length > 0 && (
+            <div className="border-2 border-amber-700">
+              <div className="bg-amber-700 text-white p-2 text-xs font-bold tracking-widest">ARAMBURU · €{totR.toFixed(2)}</div>
+              <div className="divide-y">
+                {pedido.lineasAram.map((l, i) => (
+                  <div key={i} className="p-2 text-xs flex justify-between gap-2">
+                    <div className="flex-1">
+                      <div className="font-mono text-[10px] text-stone-500">{l.ref}</div>
+                      <div>{l.desc}</div>
+                    </div>
+                    <div className="text-right shrink-0 font-mono">
+                      <div>{l.cantidad} × €{l.precioUnit?.toFixed(2)}</div>
+                      <div className="font-bold">€{l.importe?.toFixed(2)}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {pedido.lineasNoListado?.length > 0 && (
+            <div className="border-2 border-stone-700 bg-stone-50">
+              <div className="bg-stone-700 text-white p-2 text-xs font-bold tracking-widest">PRODUCTOS NO LISTADOS</div>
+              <div className="divide-y">
+                {pedido.lineasNoListado.map((l, i) => (
+                  <div key={i} className="p-2 text-xs">
+                    <div>{l.cantidad} {l.unidad} · {l.desc}</div>
+                    {l.proveedor !== "indistinto" && <div className="text-[10px] text-stone-500">prov: {l.proveedor === "aqua" ? "Aquatubo" : "Aramburu"}</div>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {pedido.notas && (
+            <div className="border-2 border-stone-300 bg-amber-50 p-2 text-xs">
+              <div className="font-bold mb-1">📝 Notas:</div>
+              <div className="whitespace-pre-wrap">{pedido.notas}</div>
+            </div>
+          )}
+
+          <div className="bg-stone-900 text-amber-400 p-3 flex justify-between items-baseline">
+            <div className="text-xs tracking-widest">TOTAL c/IVA</div>
+            <div className="font-black text-2xl" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+              €{((totA + totR) * 1.21).toFixed(2)}
+            </div>
+          </div>
+
+          {pedido.proveedoresEnviados?.length > 0 && (
+            <div className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-700 p-2">
+              📧 Email enviado a: {pedido.proveedoresEnviados.join(", ")}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// =========================================================
+//  PESTAÑA CONFIG
+// =========================================================
+function PestañaConfig({ data, api, reload, pin, onSalir }) {
+  const dc = data.datosCliente || {};
+  const ce = data.configEmail || {};
+  const [razon, setRazon] = useState(dc.razonSocial || "");
+  const [cif, setCif] = useState(dc.cif || "");
+  const [direccion, setDireccion] = useState(dc.direccion || "");
+  const [tel, setTel] = useState(dc.telefono || "");
+  const [emailC, setEmailC] = useState(dc.email || "");
+  const [pago, setPago] = useState(dc.formaPago || "");
+
+  const [emailAqua, setEmailAqua] = useState(ce.emailAquatubo || "");
+  const [emailAram, setEmailAram] = useState(ce.emailAramburu || "");
+  const [emailCC, setEmailCC] = useState(ce.emailCC || "");
+  const [firmaNombre, setFirmaNombre] = useState(ce.nombreFirma || "");
+  const [firmaTel, setFirmaTel] = useState(ce.telefonoFirma || "");
+  const [emailActivo, setEmailActivo] = useState(ce.activo || false);
+
+  const [pinViejo, setPinViejo] = useState("");
+  const [pinNuevo, setPinNuevo] = useState("");
+
+  const [guardando, setGuardando] = useState("");
+
+  const guardarDatos = async () => {
+    setGuardando("datos");
+    try {
+      await api.put("/admin/datos-cliente", {
+        razonSocial: razon, cif, direccion, telefono: tel, email: emailC, formaPago: pago
+      });
+      reload();
+      alert("✓ Datos del cliente guardados");
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setGuardando(""); }
+  };
+  const guardarEmail = async () => {
+    setGuardando("email");
+    try {
+      await api.put("/admin/config-email", {
+        emailAquatubo: emailAqua, emailAramburu: emailAram, emailCC, nombreFirma: firmaNombre, telefonoFirma: firmaTel, activo: emailActivo
+      });
+      reload();
+      alert("✓ Configuración de email guardada");
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setGuardando(""); }
+  };
+  const cambiarPin = async () => {
+    if (!/^\d{4,8}$/.test(pinNuevo)) return alert("El nuevo PIN debe ser de 4 a 8 dígitos");
+    if (!confirm("¿Cambiar el PIN? Tendrás que volver a entrar con el nuevo.")) return;
+    try {
+      await api.post("/admin/cambiar-pin", { nuevoPin: pinNuevo });
+      alert("✓ PIN cambiado. Volviendo al login.");
+      onSalir();
+    } catch (e) { alert("Error: " + e.message); }
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Datos cliente */}
+      <div className="bg-white border-2 border-stone-900">
+        <div className="bg-stone-900 text-amber-400 p-2 text-xs font-bold tracking-widest" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+          🏢 DATOS DE ARA CORPORATE (aparecen en cabecera de pedidos)
+        </div>
+        <div className="p-3 space-y-2 text-xs">
+          {[
+            ["Razón social", razon, setRazon],
+            ["CIF", cif, setCif],
+            ["Dirección", direccion, setDireccion],
+            ["Teléfono", tel, setTel],
+            ["Email", emailC, setEmailC],
+            ["Forma de pago", pago, setPago],
+          ].map(([lbl, v, setV]) => (
+            <div key={lbl}>
+              <label className="text-[10px] tracking-widest font-bold text-stone-700 mb-0.5 block">{lbl.toUpperCase()}</label>
+              <input type="text" value={v} onChange={(e) => setV(e.target.value)}
+                     className="w-full border-2 border-stone-900 p-2 focus:bg-amber-50 focus:outline-none font-mono" />
+            </div>
+          ))}
+          <button onClick={guardarDatos} disabled={guardando === "datos"}
+                  className="bg-stone-900 text-amber-400 px-4 py-2 text-xs font-black tracking-widest border-2 border-stone-900 hover:bg-amber-400 hover:text-stone-900"
+                  style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+            {guardando === "datos" ? "..." : "💾 GUARDAR DATOS"}
+          </button>
+        </div>
+      </div>
+
+      {/* Email */}
+      <div className="bg-white border-2 border-stone-900">
+        <div className="bg-stone-900 text-amber-400 p-2 text-xs font-bold tracking-widest" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+          📧 ENVÍO DE PEDIDOS POR EMAIL
+        </div>
+        <div className="p-3 space-y-2 text-xs">
+          <div className="text-[10px] text-stone-500 leading-relaxed bg-stone-50 p-2 border border-stone-300">
+            Para activar el envío automático por email necesitas:
+            <br />1) Crear cuenta en <strong>resend.com</strong> (gratis hasta 3.000 emails/mes)
+            <br />2) Añadir su API key en Render → araujo-bot → Environment como <code className="bg-stone-200 px-1">ARA_RESEND_API_KEY</code>
+            <br />3) Activar el switch de abajo
+          </div>
+          {[
+            ["Email pedidos AQUATUBO", emailAqua, setEmailAqua],
+            ["Email pedidos ARAMBURU", emailAram, setEmailAram],
+            ["Email CC (copia)", emailCC, setEmailCC],
+            ["Nombre firma", firmaNombre, setFirmaNombre],
+            ["Teléfono firma", firmaTel, setFirmaTel],
+          ].map(([lbl, v, setV]) => (
+            <div key={lbl}>
+              <label className="text-[10px] tracking-widest font-bold text-stone-700 mb-0.5 block">{lbl.toUpperCase()}</label>
+              <input type="text" value={v} onChange={(e) => setV(e.target.value)}
+                     className="w-full border-2 border-stone-900 p-2 focus:bg-amber-50 focus:outline-none font-mono" />
+            </div>
+          ))}
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={emailActivo} onChange={(e) => setEmailActivo(e.target.checked)} />
+            <span className="font-bold">Envío de email activado</span>
+          </label>
+          <button onClick={guardarEmail} disabled={guardando === "email"}
+                  className="bg-stone-900 text-amber-400 px-4 py-2 text-xs font-black tracking-widest border-2 border-stone-900 hover:bg-amber-400 hover:text-stone-900"
+                  style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+            {guardando === "email" ? "..." : "💾 GUARDAR EMAIL"}
+          </button>
+        </div>
+      </div>
+
+      {/* Cambiar PIN */}
+      <div className="bg-white border-2 border-stone-900">
+        <div className="bg-red-600 text-white p-2 text-xs font-bold tracking-widest" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+          🔐 CAMBIAR PIN ADMIN
+        </div>
+        <div className="p-3 space-y-2 text-xs">
+          <div>
+            <label className="text-[10px] tracking-widest font-bold text-stone-700 mb-0.5 block">NUEVO PIN (4-8 dígitos)</label>
+            <input type="password" value={pinNuevo} onChange={(e) => setPinNuevo(e.target.value)}
+                   maxLength={8}
+                   className="w-full border-2 border-stone-900 p-2 focus:bg-amber-50 focus:outline-none font-mono" />
+          </div>
+          <button onClick={cambiarPin} disabled={pinNuevo.length < 4}
+                  className={`px-4 py-2 text-xs font-black tracking-widest border-2 border-stone-900 ${
+                    pinNuevo.length >= 4 ? "bg-red-600 text-white hover:bg-red-700" : "bg-stone-200 text-stone-400 cursor-not-allowed"
+                  }`}
+                  style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+            🔐 CAMBIAR PIN
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// =========================================================
 //  ROOT
 // =========================================================
 export default function App() {
   const [usuario, setUsuario] = useState(null);
   const [, forceUpdate] = useState(0);
   const [cargando, setCargando] = useState(!datosCargados);
+  const [adminPin, setAdminPin] = useState(null);
+  const [vistaAdmin, setVistaAdmin] = useState(
+    typeof window !== "undefined" && (
+      window.location.search.includes("admin") ||
+      window.location.hash.includes("admin")
+    )
+  );
 
   useEffect(() => {
     if (datosCargados) return;
@@ -2910,6 +4207,29 @@ export default function App() {
     );
   }
 
-  if (!usuario) return <PantallaLogin onLogin={setUsuario} />;
+  // Vista admin (con PIN o pidiendo PIN)
+  if (vistaAdmin) {
+    if (!adminPin) {
+      return <PantallaLoginAdmin
+        onLogin={(pin) => setAdminPin(pin)}
+        onSalir={() => {
+          setVistaAdmin(false);
+          if (window.history && window.location.search.includes("admin")) {
+            window.history.replaceState({}, "", window.location.pathname);
+          }
+        }}
+      />;
+    }
+    return <PanelAdmin pin={adminPin} onSalir={() => {
+      setAdminPin(null);
+      setVistaAdmin(false);
+      if (window.history && window.location.search.includes("admin")) {
+        window.history.replaceState({}, "", window.location.pathname);
+      }
+    }} />;
+  }
+
+  // Vista operario normal
+  if (!usuario) return <PantallaLogin onLogin={setUsuario} onAdminClick={() => setVistaAdmin(true)} />;
   return <CatalogoApp usuario={usuario} onLogout={() => setUsuario(null)} />;
 }
