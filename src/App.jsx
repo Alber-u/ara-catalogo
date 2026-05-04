@@ -15,6 +15,7 @@ const BACKEND_URL = "https://araujo-bot.onrender.com/api/catalogo";
 let OBRAS = [];
 let OPERARIOS = [];
 let CATALOGO = [];
+let PROVEEDORES = [];
 
 // Bandera global del estado de carga (la lee App() para mostrar loading)
 let datosCargados = false;
@@ -27,6 +28,7 @@ async function cargarDatosBackend() {
     const data = await r.json();
     CATALOGO = Array.isArray(data.productos) ? data.productos : CATALOGO_SEED;
     OBRAS = Array.isArray(data.obras) ? data.obras : OBRAS_SEED;
+    PROVEEDORES = Array.isArray(data.proveedores) ? data.proveedores : PROVEEDORES_SEED;
     // Guardamos objetos completos {id, nombre, pin, activo} para poder validar PIN en login
     OPERARIOS = Array.isArray(data.operarios) ? data.operarios : OPERARIOS_SEED;
     // Asegurar que la opción "Otro" esté al final (como objeto especial)
@@ -41,6 +43,7 @@ async function cargarDatosBackend() {
     CATALOGO = CATALOGO_SEED;
     OBRAS = OBRAS_SEED;
     OPERARIOS = OPERARIOS_SEED;
+    PROVEEDORES = PROVEEDORES_SEED;
     datosCargados = true;
     errorBackend = e.message;
   }
@@ -1339,14 +1342,13 @@ const CATALOGO_SEED = [
 // =========================================================
 const precioNeto = (prov) => prov ? +(prov.bruto * (1 - prov.dto / 100)).toFixed(4) : null;
 
-// Devuelve el proveedor más barato de un producto, o null si solo tiene uno
+// Devuelve el id del proveedor más barato (dinámico)
 const proveedorMasBarato = (producto) => {
-  const aqua = producto.proveedores.aqua;
-  const aram = producto.proveedores.aram;
-  if (aqua && aram) {
-    return precioNeto(aqua) <= precioNeto(aram) ? "aqua" : "aram";
-  }
-  return aqua ? "aqua" : "aram";
+  const entries = Object.entries(producto.proveedores || {}).filter(([,v]) => v);
+  if (entries.length === 0) return null;
+  return entries.reduce((best, [id, v]) => {
+    return (best === null || precioNeto(v) < precioNeto(producto.proveedores[best])) ? id : best;
+  }, null);
 };
 
 const FAMILIAS = [
@@ -1574,15 +1576,25 @@ const ProductSVG = ({ type }) => {
 };
 
 // Componente "logo" mini de proveedor
+// Color helpers for dynamic providers
+const COLOR_BG    = { emerald:"bg-emerald-50",   amber:"bg-amber-50",   blue:"bg-blue-50",   violet:"bg-violet-50",  rose:"bg-rose-50",   teal:"bg-teal-50"   };
+const COLOR_ACTIVE= { emerald:"bg-emerald-700",  amber:"bg-amber-700",  blue:"bg-blue-700",  violet:"bg-violet-700", rose:"bg-rose-700",  teal:"bg-teal-700"  };
+const COLOR_TAG_BG= { emerald:"bg-emerald-100",  amber:"bg-amber-100",  blue:"bg-blue-100",  violet:"bg-violet-100", rose:"bg-rose-100",  teal:"bg-teal-100"  };
+const COLOR_TEXT  = { emerald:"text-emerald-900",amber:"text-amber-900",blue:"text-blue-900",violet:"text-violet-900",rose:"text-rose-900",teal:"text-teal-900"};
+const COLOR_BORDER= { emerald:"border-emerald-900",amber:"border-amber-900",blue:"border-blue-900",violet:"border-violet-900",rose:"border-rose-900",teal:"border-teal-900"};
+const COLOR_DOT   = { emerald:"bg-emerald-600",  amber:"bg-amber-600",  blue:"bg-blue-600",  violet:"bg-violet-600", rose:"bg-rose-600",  teal:"bg-teal-600"  };
+const COLOR_TROPHY= { emerald:"text-emerald-700",amber:"text-amber-700",blue:"text-blue-700",violet:"text-violet-700",rose:"text-rose-700",teal:"text-teal-700"};
+
+const getProvColor = (provId) => (PROVEEDORES.find(p => p.id === provId) || {}).color || "blue";
+const getProvNombre = (provId) => { const p = PROVEEDORES.find(p => p.id === provId); return p ? p.nombre.toUpperCase() : provId.toUpperCase(); };
+
 const TagProveedor = ({ tipo, size = "md" }) => {
-  const isAqua = tipo === "aqua";
+  const col = getProvColor(tipo);
   const cls = size === "sm" ? "text-[9px] px-1.5 py-0.5" : "text-[10px] px-2 py-0.5";
   return (
-    <span className={`inline-flex items-center gap-1 font-mono font-bold tracking-wider border ${cls} ${
-      isAqua ? "bg-emerald-100 text-emerald-900 border-emerald-900" : "bg-amber-100 text-amber-900 border-amber-900"
-    }`}>
-      <span className={`w-1.5 h-1.5 rounded-full ${isAqua ? "bg-emerald-600" : "bg-amber-600"}`} />
-      {isAqua ? "AQUATUBO" : "ARAMBURU"}
+    <span className={`inline-flex items-center gap-1 font-mono font-bold tracking-wider border ${cls} ${COLOR_TAG_BG[col]||"bg-blue-100"} ${COLOR_TEXT[col]||"text-blue-900"} ${COLOR_BORDER[col]||"border-blue-900"}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${COLOR_DOT[col]||"bg-blue-600"}`} />
+      {getProvNombre(tipo)}
     </span>
   );
 };
@@ -1827,16 +1839,13 @@ function PantallaLogin({ onLogin, onAdminClick }) {
 }
 
 // =========================================================
-//  CARD DE PRODUCTO con comparativa lado a lado
+//  CARD DE PRODUCTO — comparativa dinámica de proveedores
 // =========================================================
-function CardProducto({ producto, cantidadAqua, cantidadAram, addAqua, addAram, removeAqua, removeAram, setExactaAqua, setExactaAram, onClick }) {
-  const aqua = producto.proveedores.aqua;
-  const aram = producto.proveedores.aram;
+function CardProducto({ producto, cantidades, addProv, removeProv, setExacta, onClick }) {
   const ganador = proveedorMasBarato(producto);
-  const netoAqua = aqua ? precioNeto(aqua) : null;
-  const netoAram = aram ? precioNeto(aram) : null;
-  const ahorroAbs = (aqua && aram) ? Math.abs(netoAqua - netoAram) : null;
-  const ahorroPct = (aqua && aram) ? Math.round((ahorroAbs / Math.max(netoAqua, netoAram)) * 100) : null;
+  const provIds = Object.keys(producto.proveedores || {}).filter(k => producto.proveedores[k]);
+  const tieneVarios = provIds.length > 1;
+  const cols = Math.max(provIds.length, 1);
 
   return (
     <div className="bg-white border-2 border-stone-900 hover:shadow-[6px_6px_0_0_rgba(0,0,0,1)] transition-all">
@@ -1845,117 +1854,81 @@ function CardProducto({ producto, cantidadAqua, cantidadAram, addAqua, addAram, 
           <ProductSVG type={producto.img} />
         </div>
         <div className="px-3 pt-3 pb-2">
-          <div className="font-mono text-[9px] text-stone-500 tracking-widest mb-1">
-            {producto.familia.toUpperCase()}
-          </div>
-          <div className="font-bold text-sm text-stone-900 leading-tight min-h-[2.5em]">
-            {producto.desc}
-          </div>
+          <div className="font-mono text-[9px] text-stone-500 tracking-widest mb-1">{producto.familia.toUpperCase()}</div>
+          <div className="font-bold text-sm text-stone-900 leading-tight min-h-[2.5em]">{producto.desc}</div>
         </div>
       </button>
 
-      {/* Comparativa lado a lado */}
-      <div className="grid grid-cols-2 border-t-2 border-stone-900">
-        {/* Columna AQUATUBO */}
-        <div className={`p-3 border-r-2 border-stone-900 ${ganador === "aqua" ? "bg-emerald-50" : "bg-stone-50"}`}>
-          <div className="flex items-center justify-between mb-1">
-            <TagProveedor tipo="aqua" size="sm" />
-            {ganador === "aqua" && aqua && aram && (
-              <Trophy className="w-3.5 h-3.5 text-emerald-700" strokeWidth={2.5} />
-            )}
-          </div>
-          {aqua ? (
-            <>
-              <div className="font-black text-lg text-stone-900 leading-none mt-1" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
-                €{netoAqua.toFixed(2)}
+      <div className="grid border-t-2 border-stone-900" style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}>
+        {provIds.length === 0 ? (
+          <div className="p-3 text-stone-400 text-[10px] italic">Sin precio</div>
+        ) : provIds.map((provId, idx) => {
+          const provData = producto.proveedores[provId];
+          const neto = precioNeto(provData);
+          const cant = cantidades[provId] || 0;
+          const col = getProvColor(provId);
+          const esGanador = ganador === provId && tieneVarios;
+          return (
+            <div key={provId} className={`p-3 ${idx < provIds.length - 1 ? "border-r-2 border-stone-900" : ""} ${esGanador ? (COLOR_BG[col]||"bg-blue-50") : "bg-stone-50"}`}>
+              <div className="flex items-center justify-between mb-1">
+                <TagProveedor tipo={provId} size="sm" />
+                {esGanador && <Trophy className={`w-3.5 h-3.5 ${COLOR_TROPHY[col]||"text-blue-700"}`} strokeWidth={2.5} />}
               </div>
-              <div className="font-mono text-[9px] text-stone-500 mb-1">/{producto.unidad}</div>
-              {producto.cantidadPorUnidad && (
-                <div className="text-[9px] text-stone-400 mb-1">1 {producto.unidad} = {producto.cantidadPorUnidad}m</div>
-              )}
-              <div className="flex items-center justify-between">
-                {cantidadAqua === 0 ? (
-                  <button onClick={(e) => { e.stopPropagation(); addAqua(); }}
-                          className="w-full bg-stone-900 text-white text-[10px] py-1.5 font-bold tracking-wider hover:bg-emerald-700 transition-colors">
-                    + AÑADIR
-                  </button>
-                ) : (
-                  <div className="flex items-center w-full justify-between bg-emerald-700 text-white px-1 py-1 gap-1">
-                    <button onClick={(e) => { e.stopPropagation(); removeAqua(); }} className="p-0.5"><Minus className="w-3 h-3" /></button>
-                    <input
-                      type="number" min="0" value={cantidadAqua}
-                      onClick={(e) => e.stopPropagation()}
-                      onChange={(e) => { const v = parseInt(e.target.value); if (!isNaN(v)) setExactaAqua(v); }}
-                      className="w-10 text-center font-mono text-xs font-bold bg-emerald-800 text-white border border-emerald-500 focus:outline-none focus:bg-emerald-900 rounded-none"
-                    />
-                    <button onClick={(e) => { e.stopPropagation(); addAqua(); }} className="p-0.5"><Plus className="w-3 h-3" /></button>
+              {provData ? (
+                <>
+                  <div className="font-black text-lg text-stone-900 leading-none mt-1" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+                    €{neto.toFixed(2)}
                   </div>
-                )}
-              </div>
-            </>
-          ) : (
-            <div className="font-mono text-[10px] text-stone-400 italic mt-2">No disponible</div>
-          )}
-        </div>
-
-        {/* Columna ARAMBURU */}
-        <div className={`p-3 ${ganador === "aram" ? "bg-amber-50" : "bg-stone-50"}`}>
-          <div className="flex items-center justify-between mb-1">
-            <TagProveedor tipo="aram" size="sm" />
-            {ganador === "aram" && aqua && aram && (
-              <Trophy className="w-3.5 h-3.5 text-amber-700" strokeWidth={2.5} />
-            )}
-          </div>
-          {aram ? (
-            <>
-              <div className="font-black text-lg text-stone-900 leading-none mt-1" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
-                €{netoAram.toFixed(2)}
-              </div>
-              <div className="font-mono text-[9px] text-stone-500 mb-1">/{producto.unidad}</div>
-              {producto.cantidadPorUnidad && (
-                <div className="text-[9px] text-stone-400 mb-1">1 {producto.unidad} = {producto.cantidadPorUnidad}m</div>
-              )}
-              <div className="flex items-center justify-between">
-                {cantidadAram === 0 ? (
-                  <button onClick={(e) => { e.stopPropagation(); addAram(); }}
-                          className="w-full bg-stone-900 text-white text-[10px] py-1.5 font-bold tracking-wider hover:bg-amber-700 transition-colors">
-                    + AÑADIR
-                  </button>
-                ) : (
-                  <div className="flex items-center w-full justify-between bg-amber-700 text-white px-1 py-1 gap-1">
-                    <button onClick={(e) => { e.stopPropagation(); removeAram(); }} className="p-0.5"><Minus className="w-3 h-3" /></button>
-                    <input
-                      type="number" min="0" value={cantidadAram}
-                      onClick={(e) => e.stopPropagation()}
-                      onChange={(e) => { const v = parseInt(e.target.value); if (!isNaN(v)) setExactaAram(v); }}
-                      className="w-10 text-center font-mono text-xs font-bold bg-amber-800 text-white border border-amber-500 focus:outline-none focus:bg-amber-900 rounded-none"
-                    />
-                    <button onClick={(e) => { e.stopPropagation(); addAram(); }} className="p-0.5"><Plus className="w-3 h-3" /></button>
+                  <div className="font-mono text-[9px] text-stone-500 mb-1">/{producto.unidad}</div>
+                  {producto.cantidadPorUnidad && (
+                    <div className="text-[9px] text-stone-400 mb-1">1 {producto.unidad} = {producto.cantidadPorUnidad}m</div>
+                  )}
+                  <div className="flex items-center justify-between">
+                    {cant === 0 ? (
+                      <button onClick={(e) => { e.stopPropagation(); addProv(provId); }}
+                              className="w-full bg-stone-900 text-white text-[10px] py-1.5 font-bold tracking-wider hover:opacity-80 transition-opacity">
+                        + AÑADIR
+                      </button>
+                    ) : (
+                      <div className={`flex items-center w-full justify-between ${COLOR_ACTIVE[col]||"bg-blue-700"} text-white px-1 py-1 gap-1`}>
+                        <button onClick={(e) => { e.stopPropagation(); removeProv(provId); }} className="p-0.5"><Minus className="w-3 h-3" /></button>
+                        <input
+                          type="number" min="0" value={cant}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => { const v = parseInt(e.target.value); if (!isNaN(v)) setExacta(provId, v); }}
+                          className="w-10 text-center font-mono text-xs font-bold bg-stone-800 text-white border border-stone-500 focus:outline-none rounded-none"
+                        />
+                        <button onClick={(e) => { e.stopPropagation(); addProv(provId); }} className="p-0.5"><Plus className="w-3 h-3" /></button>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-            </>
-          ) : (
-            <div className="font-mono text-[10px] text-stone-400 italic mt-2">No disponible</div>
-          )}
-        </div>
+                </>
+              ) : (
+                <div className="font-mono text-[10px] text-stone-400 italic mt-2">No disponible</div>
+              )}
+            </div>
+          );
+        })}
       </div>
 
-      {/* Footer indicador ahorro */}
-      {ahorroPct !== null && ahorroPct > 0 && (
-        <div className={`px-3 py-1.5 text-[10px] font-bold tracking-wider border-t-2 border-stone-900 ${
-          ganador === "aqua" ? "bg-emerald-700 text-white" : "bg-amber-700 text-white"
-        }`}>
-          AHORRA €{ahorroAbs.toFixed(2)}/{producto.unidad} ELIGIENDO {ganador === "aqua" ? "AQUATUBO" : "ARAMBURU"} ({ahorroPct}%)
-        </div>
-      )}
+      {tieneVarios && (() => {
+        const precios = provIds.map(id => precioNeto(producto.proveedores[id])).filter(Boolean);
+        if (precios.length < 2) return null;
+        const min = Math.min(...precios); const max = Math.max(...precios);
+        const pct = max > 0 ? Math.round(((max - min) / max) * 100) : 0;
+        if (pct <= 0) return null;
+        const col = getProvColor(ganador);
+        return (
+          <div className={`px-3 py-1.5 text-[10px] font-bold tracking-wider border-t-2 border-stone-900 ${COLOR_BG[col]||"bg-blue-50"} ${COLOR_TEXT[col]||"text-blue-900"}`}>
+            AHORRO {pct}% · €{(max - min).toFixed(2)}/u con {getProvNombre(ganador)}
+          </div>
+        );
+      })()}
     </div>
   );
 }
 
-// =========================================================
-//  APP PRINCIPAL — gestor de catálogo y pedido
-// =========================================================
+
 function CatalogoApp({ usuario, onLogout }) {
   const [familia, setFamilia] = useState("Todo");
   const [busqueda, setBusqueda] = useState("");
@@ -2681,14 +2654,10 @@ function CatalogoApp({ usuario, onLogout }) {
             <CardProducto
               key={p.id}
               producto={p}
-              cantidadAqua={getCant(p.id, "aqua")}
-              cantidadAram={getCant(p.id, "aram")}
-              addAqua={() => addProv(p.id, "aqua")}
-              addAram={() => addProv(p.id, "aram")}
-              removeAqua={() => removeProv(p.id, "aqua")}
-              removeAram={() => removeProv(p.id, "aram")}
-              setExactaAqua={(n) => setExacta(p.id, "aqua", n)}
-              setExactaAram={(n) => setExacta(p.id, "aram", n)}
+              cantidades={Object.fromEntries(PROVEEDORES.map(pv => [pv.id, getCant(p.id, pv.id)]))}
+              addProv={(provId) => addProv(p.id, provId)}
+              removeProv={(provId) => removeProv(p.id, provId)}
+              setExacta={(provId, n) => setExacta(p.id, provId, n)}
               onClick={() => setProductoSel(p)}
             />
           ))}
@@ -3370,7 +3339,8 @@ function PanelAdmin({ pin, onSalir }) {
     { id: "resumen",   nombre: "RESUMEN",  icon: "📊" },
     { id: "productos", nombre: "PRODUCTOS", icon: "📦" },
     { id: "obras",     nombre: "OBRAS",    icon: "🏗" },
-    { id: "operarios", nombre: "OPERARIOS", icon: "👷" },
+    { id: "operarios",  nombre: "OPERARIOS",  icon: "👷" },
+    { id: "proveedores",nombre: "PROVEEDORES", icon: "🏢" },
     { id: "pedidos",   nombre: "PEDIDOS",  icon: "📋" },
     { id: "config",    nombre: "CONFIG",   icon: "⚙️" },
   ];
@@ -3425,6 +3395,7 @@ function PanelAdmin({ pin, onSalir }) {
         {pestaña === "productos" && <PestañaProductos data={data} api={api} reload={recargarTodo} />}
         {pestaña === "obras"     && <PestañaObras data={data} api={api} reload={recargarTodo} />}
         {pestaña === "operarios" && <PestañaOperarios data={data} api={api} reload={recargarTodo} />}
+        {pestaña === "proveedores" && <PestañaProveedores data={data} api={api} reload={recargarTodo} />}
         {pestaña === "pedidos"   && <PestañaPedidos data={data} />}
         {pestaña === "config"    && <PestañaConfig data={data} api={api} reload={recargarTodo} pin={pin} onSalir={onSalir} />}
       </div>
@@ -4244,37 +4215,34 @@ function ModalEditarProducto({ producto, api, reload, onCerrar, plantillaInicial
   const [familia, setFamilia] = useState(inicial.familia || "Varios");
   const [unidad, setUnidad] = useState(inicial.unidad || "uni");
   const [img, setImg] = useState(inicial.img || "tapon");
-
-  const aq0 = inicial.proveedores?.aqua;
-  const [aqRef, setAqRef] = useState(aq0?.ref || "");
-  const [aqBruto, setAqBruto] = useState(aq0?.bruto || "");
-  const [aqDto, setAqDto] = useState(aq0?.dto || "");
-  const [aqMarca, setAqMarca] = useState(aq0?.marca || "—");
-
-  const ar0 = inicial.proveedores?.aram;
-  const [arRef, setArRef] = useState(ar0?.ref || "");
-  const [arBruto, setArBruto] = useState(ar0?.bruto || "");
-  const [arDto, setArDto] = useState(ar0?.dto || "");
-  const [arMarca, setArMarca] = useState(ar0?.marca || "—");
-
   const [cantPorUnidad, setCantPorUnidad] = useState(inicial.cantidadPorUnidad || "");
   const [guardando, setGuardando] = useState(false);
+
+  // Estado dinámico por proveedor: { provId: { ref, bruto, dto, marca } }
+  const [provData, setProvData] = useState(() => {
+    const d = {};
+    PROVEEDORES.forEach(prov => {
+      const p = inicial.proveedores?.[prov.id];
+      d[prov.id] = { ref: p?.ref || "", bruto: p?.bruto || "", dto: p?.dto || "", marca: p?.marca || "—" };
+    });
+    return d;
+  });
+
+  const setProvField = (provId, field, val) => setProvData(prev => ({ ...prev, [provId]: { ...prev[provId], [field]: val } }));
 
   const handleGuardar = async () => {
     if (!desc.trim()) return alert("La descripción es obligatoria");
     setGuardando(true);
     try {
       const proveedores = {};
-      if (aqRef && aqBruto) {
-        proveedores.aqua = { ref: aqRef, bruto: parseFloat(aqBruto), dto: parseFloat(aqDto) || 0, marca: aqMarca };
-      }
-      if (arRef && arBruto) {
-        proveedores.aram = { ref: arRef, bruto: parseFloat(arBruto), dto: parseFloat(arDto) || 0, marca: arMarca };
-      }
+      PROVEEDORES.forEach(prov => {
+        const d = provData[prov.id];
+        if (d?.ref && d?.bruto) {
+          proveedores[prov.id] = { ref: d.ref, bruto: parseFloat(d.bruto), dto: parseFloat(d.dto) || 0, marca: d.marca || "—" };
+        }
+      });
       const body = { desc, familia, unidad, img, proveedores, cantidadPorUnidad: cantPorUnidad ? parseFloat(cantPorUnidad) : null };
-
       if (esValidacion) {
-        // Validar pendiente: crea producto y marca pendiente como validado
         await api.post("/admin/pendiente/" + esValidacion.id + "/validar", body);
       } else if (producto) {
         await api.put("/admin/producto/" + producto.id, body);
@@ -4289,9 +4257,6 @@ function ModalEditarProducto({ producto, api, reload, onCerrar, plantillaInicial
       setGuardando(false);
     }
   };
-
-  const aqNeto = aqBruto ? +(parseFloat(aqBruto) * (1 - (parseFloat(aqDto) || 0) / 100)).toFixed(4) : null;
-  const arNeto = arBruto ? +(parseFloat(arBruto) * (1 - (parseFloat(arDto) || 0) / 100)).toFixed(4) : null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
@@ -4348,11 +4313,10 @@ function ModalEditarProducto({ producto, api, reload, onCerrar, plantillaInicial
             </div>
           </div>
 
-          {/* Cantidad por unidad — para rollos, barras, etc */}
           {(unidad === "rollo" || unidad === "barra" || unidad === "caja") && (
             <div>
               <label className="text-[10px] tracking-widest font-bold text-stone-700 mb-1 block">
-                METROS / UNIDADES POR {unidad.toUpperCase()} <span className="font-normal opacity-60">(opcional, info para el operario)</span>
+                METROS / UNIDADES POR {unidad.toUpperCase()} <span className="font-normal opacity-60">(opcional)</span>
               </label>
               <input type="number" step="0.1" min="0" value={cantPorUnidad}
                      onChange={(e) => setCantPorUnidad(e.target.value)}
@@ -4361,73 +4325,47 @@ function ModalEditarProducto({ producto, api, reload, onCerrar, plantillaInicial
             </div>
           )}
 
-          {/* Aquatubo */}
-          <div className="border-2 border-emerald-700 bg-emerald-50 p-3">
-            <div className="font-black text-sm text-emerald-900 mb-2" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
-              🟢 AQUATUBO {!aqRef && <span className="text-[10px] font-normal opacity-60">(opcional)</span>}
-            </div>
-            <div className="grid grid-cols-4 gap-2">
-              <div>
-                <label className="text-[10px] font-bold text-stone-700 mb-1 block">REF</label>
-                <input type="text" value={aqRef} onChange={(e) => setAqRef(e.target.value)}
-                       className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:bg-white focus:outline-none" />
+          {/* Sección dinámica por proveedor */}
+          {PROVEEDORES.map(prov => {
+            const d = provData[prov.id] || {};
+            const col = getProvColor(prov.id);
+            const neto = d.bruto ? +(parseFloat(d.bruto) * (1 - (parseFloat(d.dto) || 0) / 100)).toFixed(4) : null;
+            return (
+              <div key={prov.id} className={`border-2 ${COLOR_BORDER[col]||"border-blue-700"} ${COLOR_TAG_BG[col]||"bg-blue-50"} p-3`}>
+                <div className={`font-black text-sm mb-2 ${COLOR_TEXT[col]||"text-blue-900"}`} style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+                  <span className={`w-2 h-2 rounded-full inline-block mr-2 ${COLOR_DOT[col]||"bg-blue-600"}`} />
+                  {prov.nombre.toUpperCase()} {!d.ref && <span className="text-[10px] font-normal opacity-60">(opcional)</span>}
+                </div>
+                <div className="grid grid-cols-4 gap-2">
+                  <div>
+                    <label className="text-[10px] font-bold text-stone-700 mb-1 block">REF</label>
+                    <input type="text" value={d.ref} onChange={(e) => setProvField(prov.id, "ref", e.target.value)}
+                           className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:bg-white focus:outline-none" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-stone-700 mb-1 block">BRUTO €</label>
+                    <input type="number" step="0.001" value={d.bruto} onChange={(e) => setProvField(prov.id, "bruto", e.target.value)}
+                           className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:bg-white focus:outline-none" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-stone-700 mb-1 block">DTO %</label>
+                    <input type="number" step="0.01" value={d.dto} onChange={(e) => setProvField(prov.id, "dto", e.target.value)}
+                           className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:bg-white focus:outline-none" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-stone-700 mb-1 block">MARCA</label>
+                    <input type="text" value={d.marca} onChange={(e) => setProvField(prov.id, "marca", e.target.value)}
+                           className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:bg-white focus:outline-none" />
+                  </div>
+                </div>
+                {neto !== null && (
+                  <div className={`mt-2 text-xs font-bold ${COLOR_TEXT[col]||"text-blue-900"}`}>
+                    Precio neto = €{neto}/{unidad}
+                  </div>
+                )}
               </div>
-              <div>
-                <label className="text-[10px] font-bold text-stone-700 mb-1 block">BRUTO €</label>
-                <input type="number" step="0.001" value={aqBruto} onChange={(e) => setAqBruto(e.target.value)}
-                       className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:bg-white focus:outline-none" />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-stone-700 mb-1 block">DTO %</label>
-                <input type="number" step="0.01" value={aqDto} onChange={(e) => setAqDto(e.target.value)}
-                       className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:bg-white focus:outline-none" />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-stone-700 mb-1 block">MARCA</label>
-                <input type="text" value={aqMarca} onChange={(e) => setAqMarca(e.target.value)}
-                       className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:bg-white focus:outline-none" />
-              </div>
-            </div>
-            {aqNeto !== null && (
-              <div className="mt-2 text-xs font-bold text-emerald-900">
-                Precio neto = €{aqNeto}/{unidad}
-              </div>
-            )}
-          </div>
-
-          {/* Aramburu */}
-          <div className="border-2 border-amber-700 bg-amber-50 p-3">
-            <div className="font-black text-sm text-amber-900 mb-2" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
-              🟡 ARAMBURU {!arRef && <span className="text-[10px] font-normal opacity-60">(opcional)</span>}
-            </div>
-            <div className="grid grid-cols-4 gap-2">
-              <div>
-                <label className="text-[10px] font-bold text-stone-700 mb-1 block">REF</label>
-                <input type="text" value={arRef} onChange={(e) => setArRef(e.target.value)}
-                       className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:bg-white focus:outline-none" />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-stone-700 mb-1 block">BRUTO €</label>
-                <input type="number" step="0.001" value={arBruto} onChange={(e) => setArBruto(e.target.value)}
-                       className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:bg-white focus:outline-none" />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-stone-700 mb-1 block">DTO %</label>
-                <input type="number" step="0.01" value={arDto} onChange={(e) => setArDto(e.target.value)}
-                       className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:bg-white focus:outline-none" />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-stone-700 mb-1 block">MARCA</label>
-                <input type="text" value={arMarca} onChange={(e) => setArMarca(e.target.value)}
-                       className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:bg-white focus:outline-none" />
-              </div>
-            </div>
-            {arNeto !== null && (
-              <div className="mt-2 text-xs font-bold text-amber-900">
-                Precio neto = €{arNeto}/{unidad}
-              </div>
-            )}
-          </div>
+            );
+          })}
 
           <div className="flex gap-2 pt-2 border-t-2 border-stone-200">
             <button onClick={onCerrar}
@@ -4896,6 +4834,148 @@ function ModalDetallePedido({ pedido, onCerrar }) {
             </div>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// =========================================================
+//  PESTAÑA PROVEEDORES
+// =========================================================
+function PestañaProveedores({ data, api, reload }) {
+  const [nombre, setNombre] = useState("");
+  const [formaPago, setFormaPago] = useState("Contado");
+  const [email, setEmail] = useState("");
+  const [color, setColor] = useState("blue");
+  const [añadiendo, setAñadiendo] = useState(false);
+  const [editando, setEditando] = useState(null);
+  const [editForm, setEditForm] = useState({});
+
+  const proveedores = data.proveedores || PROVEEDORES_SEED;
+  const COLORES = ["emerald","amber","blue","violet","rose","teal"];
+
+  const handleAdd = async () => {
+    if (!nombre.trim()) return;
+    setAñadiendo(true);
+    try {
+      await api.post("/admin/proveedor", { nombre: nombre.trim(), formaPago, email, color, activo: true });
+      setNombre(""); setFormaPago("Contado"); setEmail(""); setColor("blue");
+      reload();
+    } finally { setAñadiendo(false); }
+  };
+
+  const handleEdit = (prov) => { setEditando(prov.id); setEditForm({ nombre: prov.nombre, formaPago: prov.formaPago || "", email: prov.email || "", color: prov.color || "blue" }); };
+  const handleSave = async (prov) => {
+    await api.put("/admin/proveedor/" + prov.id, editForm);
+    setEditando(null);
+    reload();
+  };
+  const handleToggle = async (prov) => { await api.put("/admin/proveedor/" + prov.id, { activo: !prov.activo }); reload(); };
+  const handleDelete = async (prov) => {
+    if (!confirm(`¿Borrar "${prov.nombre}"? Los productos con este proveedor perderán sus precios.`)) return;
+    await api.del("/admin/proveedor/" + prov.id);
+    reload();
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white border-2 border-stone-900 p-3">
+        <div className="text-[10px] tracking-widest font-bold text-stone-700 mb-3">AÑADIR PROVEEDOR</div>
+        <div className="grid grid-cols-2 gap-2 mb-2">
+          <div>
+            <label className="text-[10px] font-bold text-stone-600 mb-1 block">NOMBRE</label>
+            <input type="text" value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Nombre del proveedor"
+                   className="w-full border-2 border-stone-900 p-2 text-sm focus:bg-amber-50 focus:outline-none font-mono" />
+          </div>
+          <div>
+            <label className="text-[10px] font-bold text-stone-600 mb-1 block">FORMA DE PAGO</label>
+            <input type="text" value={formaPago} onChange={(e) => setFormaPago(e.target.value)} placeholder="ej: Contado"
+                   className="w-full border-2 border-stone-900 p-2 text-sm focus:bg-amber-50 focus:outline-none font-mono" />
+          </div>
+          <div>
+            <label className="text-[10px] font-bold text-stone-600 mb-1 block">EMAIL (para pedidos)</label>
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="proveedor@email.com"
+                   className="w-full border-2 border-stone-900 p-2 text-sm focus:bg-amber-50 focus:outline-none font-mono" />
+          </div>
+          <div>
+            <label className="text-[10px] font-bold text-stone-600 mb-1 block">COLOR</label>
+            <div className="flex gap-1 flex-wrap">
+              {COLORES.map(c => (
+                <button key={c} onClick={() => setColor(c)}
+                        className={`w-7 h-7 rounded-none border-2 ${color === c ? "border-stone-900 scale-110" : "border-stone-300"} bg-${c}-400`}
+                        title={c} />
+              ))}
+            </div>
+          </div>
+        </div>
+        <button onClick={handleAdd} disabled={añadiendo || nombre.trim().length < 2}
+                className={`px-4 py-2 text-xs font-black tracking-widest border-2 border-stone-900 ${
+                  añadiendo || nombre.trim().length < 2 ? "bg-stone-200 text-stone-400 cursor-not-allowed" : "bg-stone-900 text-amber-400 hover:bg-amber-400 hover:text-stone-900"
+                }`} style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+          + AÑADIR PROVEEDOR
+        </button>
+      </div>
+
+      <div className="bg-white border-2 border-stone-900 divide-y divide-stone-200">
+        {proveedores.map(prov => (
+          <div key={prov.id} className="p-3 hover:bg-amber-50">
+            {editando === prov.id ? (
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[10px] font-bold text-stone-600 mb-1 block">NOMBRE</label>
+                    <input type="text" value={editForm.nombre} onChange={(e) => setEditForm(f => ({...f, nombre: e.target.value}))}
+                           className="w-full border-2 border-stone-900 p-2 text-sm focus:bg-amber-50 focus:outline-none font-mono" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-stone-600 mb-1 block">FORMA DE PAGO</label>
+                    <input type="text" value={editForm.formaPago} onChange={(e) => setEditForm(f => ({...f, formaPago: e.target.value}))}
+                           className="w-full border-2 border-stone-900 p-2 text-sm focus:bg-amber-50 focus:outline-none font-mono" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-stone-600 mb-1 block">EMAIL</label>
+                    <input type="email" value={editForm.email} onChange={(e) => setEditForm(f => ({...f, email: e.target.value}))}
+                           className="w-full border-2 border-stone-900 p-2 text-sm focus:bg-amber-50 focus:outline-none font-mono" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-stone-600 mb-1 block">COLOR</label>
+                    <div className="flex gap-1 flex-wrap">
+                      {COLORES.map(c => (
+                        <button key={c} onClick={() => setEditForm(f => ({...f, color: c}))}
+                                className={`w-7 h-7 rounded-none border-2 ${editForm.color === c ? "border-stone-900" : "border-stone-300"} bg-${c}-400`} />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => handleSave(prov)} className="px-3 py-1.5 text-xs font-black tracking-widest border-2 border-stone-900 bg-stone-900 text-amber-400 hover:bg-amber-400 hover:text-stone-900">✓ GUARDAR</button>
+                  <button onClick={() => setEditando(null)} className="px-3 py-1.5 text-xs font-bold border-2 border-stone-900 bg-white hover:bg-stone-100">✕</button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className={`w-3 h-3 rounded-full bg-${prov.color||"blue"}-500`} />
+                    <div className="font-bold text-sm">{prov.nombre}</div>
+                    {(prov.id === "aqua" || prov.id === "aram") && <span className="text-[9px] bg-stone-200 px-1">ORIGINAL</span>}
+                  </div>
+                  <div className="text-[10px] text-stone-500 mt-0.5">
+                    {prov.formaPago || "Sin forma de pago"} {prov.email && <> · {prov.email}</>}
+                    {prov.activo === false && <span className="text-red-700 font-bold ml-2">INACTIVO</span>}
+                  </div>
+                </div>
+                <button onClick={() => handleEdit(prov)} className="text-[10px] font-bold bg-amber-500 text-stone-900 px-2 py-1 border border-stone-900 hover:bg-amber-400">✏</button>
+                <button onClick={() => handleToggle(prov)} className="text-[10px] font-bold bg-stone-200 text-stone-900 px-2 py-1 border border-stone-900 hover:bg-stone-300">
+                  {prov.activo === false ? "✓ ACTIVAR" : "⏸"}
+                </button>
+                {prov.id !== "aqua" && prov.id !== "aram" && (
+                  <button onClick={() => handleDelete(prov)} className="text-[10px] font-bold bg-red-600 text-white px-2 py-1 border border-stone-900 hover:bg-red-700">🗑</button>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );
