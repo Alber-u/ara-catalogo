@@ -2054,9 +2054,12 @@ function CatalogoApp({ usuario, onLogout }) {
       if (!p || !p.proveedores[prov]) return null;
       const proveedor = p.proveedores[prov];
       const neto = precioNeto(proveedor);
+      // Para rollo/barra: precio es €/m, multiplicar por metros por unidad
+      const mPorUnidad = (p.cantidadPorUnidad && (p.unidad === "rollo" || p.unidad === "barra")) ? p.cantidadPorUnidad : 1;
+      const subtotal = +(neto * mPorUnidad * cant).toFixed(2);
       return {
-        id, prov, producto: p, proveedor, cantidad: cant, neto,
-        subtotal: +(neto * cant).toFixed(2)
+        id, prov, producto: p, proveedor, cantidad: cant, neto, mPorUnidad,
+        subtotal
       };
     }).filter(Boolean);
   }, [carrito]);
@@ -2139,11 +2142,13 @@ function CatalogoApp({ usuario, onLogout }) {
         obra: usuario.obra,
         lineasAqua: lineasCarrito.filter(l => l.prov === "aqua").map(l => ({
           ref: l.proveedor.ref, desc: l.producto.desc, cantidad: l.cantidad,
-          unidad: l.producto.unidad, precioUnit: l.neto, importe: l.subtotal
+          unidad: l.producto.unidad, precioUnit: l.neto, importe: l.subtotal,
+          mPorUnidad: l.mPorUnidad, metros: l.mPorUnidad > 1 ? +(l.cantidad * l.mPorUnidad).toFixed(1) : null
         })),
         lineasAram: lineasCarrito.filter(l => l.prov === "aram").map(l => ({
           ref: l.proveedor.ref, desc: l.producto.desc, cantidad: l.cantidad,
-          unidad: l.producto.unidad, precioUnit: l.neto, importe: l.subtotal
+          unidad: l.producto.unidad, precioUnit: l.neto, importe: l.subtotal,
+          mPorUnidad: l.mPorUnidad, metros: l.mPorUnidad > 1 ? +(l.cantidad * l.mPorUnidad).toFixed(1) : null
         })),
         lineasNoListado: lineasNoListadas,
         notas: notasPedido,
@@ -2168,12 +2173,12 @@ function CatalogoApp({ usuario, onLogout }) {
       txt += `Obra: ${d.obra.nombre}\nFecha: ${fecha}\nSolicita: ${d.operario}\nID: ${d.pedidoId}\n\n`;
       if ((d.lineasAqua || []).length > 0) {
         txt += `*── AQUATUBO SL (60 días) ──*\n`;
-        d.lineasAqua.forEach(l => { txt += `• ${l.cantidad} ${l.unidad} · ${l.desc} (ref ${l.ref}) — €${l.importe.toFixed(2)}\n`; });
+        d.lineasAqua.forEach(l => { const mu = l.metros ? ` (${l.metros}m)` : ""; txt += `• ${l.cantidad} ${l.unidad}${mu} · ${l.desc} (ref ${l.ref}) — €${l.importe.toFixed(2)}\n`; });
         txt += `Subtotal: €${d.totalAqua.toFixed(2)} + IVA\n\n`;
       }
       if ((d.lineasAram || []).length > 0) {
         txt += `*── ARAMBURU GUZMÁN SLU (Contado) ──*\n`;
-        d.lineasAram.forEach(l => { txt += `• ${l.cantidad} ${l.unidad} · ${l.desc} (ref ${l.ref}) — €${l.importe.toFixed(2)}\n`; });
+        d.lineasAram.forEach(l => { const mu = l.metros ? ` (${l.metros}m)` : ""; txt += `• ${l.cantidad} ${l.unidad}${mu} · ${l.desc} (ref ${l.ref}) — €${l.importe.toFixed(2)}\n`; });
         txt += `Subtotal: €${d.totalAram.toFixed(2)} + IVA\n\n`;
       }
       const todosNoList = d.lineasNoListado || [];
@@ -2206,7 +2211,7 @@ function CatalogoApp({ usuario, onLogout }) {
     txt += `Obra: ${d.obra.nombre}\nFecha: ${fecha}\nSolicita: ${d.operario}\n\n`;
     if (lineas.length > 0) {
       txt += `*LÍNEAS:*\n`;
-      lineas.forEach(l => { txt += `• ${l.cantidad} ${l.unidad} · ${l.desc} (ref ${l.ref}) — €${l.importe.toFixed(2)}\n`; });
+      lineas.forEach(l => { const mu = l.metros ? ` (${l.metros}m)` : ""; txt += `• ${l.cantidad} ${l.unidad}${mu} · ${l.desc} (ref ${l.ref}) — €${l.importe.toFixed(2)}\n`; });
     }
     if (noList.length > 0) {
       txt += `\n*PRODUCTOS NO LISTADOS (confirmar precio):*\n`;
@@ -2264,7 +2269,8 @@ function CatalogoApp({ usuario, onLogout }) {
         lineas.forEach(l => {
           if (y > 270) { doc.addPage(); y = 20; }
           const desc = l.desc.length > 50 ? l.desc.substring(0, 48) + ".." : l.desc;
-          doc.text(String(l.cantidad), 17, y); doc.text(String(l.ref || "—"), 32, y);
+          const cantStr = l.metros ? `${l.cantidad}u(${l.metros}m)` : String(l.cantidad);
+          doc.text(cantStr, 17, y); doc.text(String(l.ref || "—"), 32, y);
           doc.text(desc, 60, y);
           doc.text("€" + l.precioUnit.toFixed(2), 152, y, { align: "right" });
           doc.text("€" + l.importe.toFixed(2), 192, y, { align: "right" }); y += 4;
@@ -2405,7 +2411,8 @@ function CatalogoApp({ usuario, onLogout }) {
       lineasCatalogo.forEach(l => {
         if (y > 270) { doc.addPage(); y = 20; }
         const desc = l.desc.length > 50 ? l.desc.substring(0, 48) + ".." : l.desc;
-        doc.text(String(l.cantidad), 17, y);
+        const cantStr2 = l.metros ? `${l.cantidad}u(${l.metros}m)` : String(l.cantidad);
+        doc.text(cantStr2, 17, y);
         doc.text(String(l.ref || "—"), 32, y);
         doc.text(desc, 60, y);
         doc.text("€" + l.precioUnit.toFixed(2), 152, y, { align: "right" });
