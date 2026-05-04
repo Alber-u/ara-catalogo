@@ -2036,43 +2036,170 @@ function CatalogoApp({ usuario, onLogout }) {
   function generarMensajeWhatsApp(prov) {
     const d = datosPedidoEnviado;
     if (!d) return "";
-    const isAqua = prov === "aqua";
-    const lineas = isAqua ? d.lineasAqua : d.lineasAram;
+    const fecha = new Date(d.fechaIso).toLocaleDateString("es-ES");
+
+    // COMPLETO
+    if (prov === "completo") {
+      let txt = `*PEDIDO COMPLETO · ARA CORPORATE*\n`;
+      txt += `Obra: ${d.obra.nombre}\nFecha: ${fecha}\nSolicita: ${d.operario}\nID: ${d.pedidoId}\n\n`;
+      if ((d.lineasAqua || []).length > 0) {
+        txt += `*── AQUATUBO SL (60 días) ──*\n`;
+        d.lineasAqua.forEach(l => { txt += `• ${l.cantidad} ${l.unidad} · ${l.desc} (ref ${l.ref}) — €${l.importe.toFixed(2)}\n`; });
+        txt += `Subtotal: €${d.totalAqua.toFixed(2)} + IVA\n\n`;
+      }
+      if ((d.lineasAram || []).length > 0) {
+        txt += `*── ARAMBURU GUZMÁN SLU (Contado) ──*\n`;
+        d.lineasAram.forEach(l => { txt += `• ${l.cantidad} ${l.unidad} · ${l.desc} (ref ${l.ref}) — €${l.importe.toFixed(2)}\n`; });
+        txt += `Subtotal: €${d.totalAram.toFixed(2)} + IVA\n\n`;
+      }
+      const todosNoList = d.lineasNoListado || [];
+      if (todosNoList.length > 0) {
+        txt += `*── NO LISTADOS (confirmar precio) ──*\n`;
+        todosNoList.forEach(l => {
+          const pl = l.proveedor === "aqua" ? "Aquatubo" : l.proveedor === "aram" ? "Aramburu" : l.proveedor === "indistinto" ? "Cualquiera" : l.proveedor;
+          txt += `• ${l.cantidad} ${l.unidad}: ${l.desc} (${pl})\n`;
+        });
+        txt += `\n`;
+      }
+      txt += `*TOTAL GENERAL: €${(d.totalGeneral * 1.21).toFixed(2)} IVA inc.*\n`;
+      if (d.notas) txt += `\n*Notas:*\n${d.notas}\n`;
+      txt += `\n— ARA Corporate, CIF B90488222`;
+      return txt;
+    }
+
+    // Proveedor específico
+    const esAqua = prov === "aqua";
+    const esAram = prov === "aram";
+    const lineas = esAqua ? (d.lineasAqua || []) : esAram ? (d.lineasAram || []) : [];
+    const noList = (d.lineasNoListado || []).filter(l => l.proveedor === prov);
     const subtotal = lineas.reduce((s, l) => s + (l.importe || 0), 0);
     const iva = subtotal * 0.21;
     const total = subtotal + iva;
-    const fecha = new Date(d.fechaIso).toLocaleDateString("es-ES");
-    const noList = (d.lineasNoListado || []).filter(l => l.proveedor === prov || l.proveedor === "indistinto");
+    const nombreProv = esAqua ? "AQUATUBO SL" : esAram ? "ARAMBURU GUZMÁN SLU" : prov === "indistinto" ? "SIN PROVEEDOR" : prov.toUpperCase();
+    const formaPago = esAqua ? "60 días" : esAram ? "Contado" : "Pendiente";
 
-    let txt = `*PEDIDO ARA CORPORATE*\n`;
-    txt += `Obra: ${d.obra.nombre}\n`;
-    txt += `Fecha: ${fecha}\n`;
-    txt += `Solicita: ${d.operario}\n\n`;
-    txt += `*LÍNEAS:*\n`;
-    lineas.forEach(l => {
-      txt += `• ${l.cantidad} ${l.unidad} · ${l.desc} (ref ${l.ref}) — €${l.importe.toFixed(2)}\n`;
-    });
+    let txt = `*PEDIDO ARA CORPORATE → ${nombreProv}*\n`;
+    txt += `Obra: ${d.obra.nombre}\nFecha: ${fecha}\nSolicita: ${d.operario}\n\n`;
+    if (lineas.length > 0) {
+      txt += `*LÍNEAS:*\n`;
+      lineas.forEach(l => { txt += `• ${l.cantidad} ${l.unidad} · ${l.desc} (ref ${l.ref}) — €${l.importe.toFixed(2)}\n`; });
+    }
     if (noList.length > 0) {
       txt += `\n*PRODUCTOS NO LISTADOS (confirmar precio):*\n`;
-      noList.forEach(l => {
-        txt += `• ${l.cantidad} ${l.unidad}: ${l.desc}\n`;
-      });
+      noList.forEach(l => { txt += `• ${l.cantidad} ${l.unidad}: ${l.desc}\n`; });
     }
-    txt += `\nBase: €${subtotal.toFixed(2)}\nIVA 21%: €${iva.toFixed(2)}\n*TOTAL: €${total.toFixed(2)}*\n`;
+    if (lineas.length > 0) {
+      txt += `\nBase: €${subtotal.toFixed(2)}\nIVA 21%: €${iva.toFixed(2)}\n*TOTAL: €${total.toFixed(2)}*\n`;
+      txt += `Forma de pago: ${formaPago}\n`;
+    }
     if (d.notas) txt += `\n*Notas:*\n${d.notas}\n`;
     txt += `\n— ARA Corporate, CIF B90488222`;
     return txt;
   }
 
-  // Genera y descarga PDF — proveedor: "aqua" | "aram" | "indistinto" | nombre libre
+  // Genera y descarga PDF — proveedor: "aqua" | "aram" | "indistinto" | "completo" | nombre libre
   async function descargarPDF(proveedor) {
     const d = datosPedidoEnviado;
     if (!d) return;
 
+    // COMPLETO: genera un PDF con todos los proveedores
+    if (proveedor === "completo") {
+      let jsPDFmod;
+      try { jsPDFmod = await import("jspdf"); }
+      catch (e) { alert("No se pudo cargar el generador de PDF."); return; }
+      const { jsPDF } = jsPDFmod;
+      const doc = new jsPDF({ unit: "mm", format: "a4" });
+      let y = 15;
+
+      doc.setFont("helvetica", "bold"); doc.setFontSize(16);
+      doc.text("PEDIDO COMPLETO · ARA CORPORATE", 105, y, { align: "center" }); y += 6;
+      doc.setFontSize(9); doc.setFont("helvetica", "normal");
+      doc.text("ARA Corporate Sociedad de Inversiones, SL · CIF B90488222", 105, y, { align: "center" }); y += 4;
+      doc.text("Avd San Francisco Javier 9 P6 M9, 41018 Sevilla · Tel 640527426", 105, y, { align: "center" }); y += 8;
+      doc.setDrawColor(0); doc.setLineWidth(0.5); doc.line(15, y, 195, y); y += 6;
+
+      doc.setFont("helvetica", "bold"); doc.setFontSize(10);
+      doc.text("DATOS DEL PEDIDO", 15, y); y += 5;
+      doc.setFont("helvetica", "normal"); doc.setFontSize(9);
+      doc.text(`Fecha:     ${new Date(d.fechaIso).toLocaleDateString("es-ES", { dateStyle: "long" })}`, 15, y); y += 4;
+      doc.text(`Obra:      ${d.obra.nombre}`, 15, y); y += 4;
+      doc.text(`Dirección: ${d.obra.dir || "-"}`, 15, y); y += 4;
+      doc.text(`Solicita:  ${d.operario}`, 15, y); y += 4;
+      doc.text(`Pedido ID: ${d.pedidoId}`, 15, y); y += 8;
+
+      const pintarSeccion = (titulo, lineas, total, iva, formaPago) => {
+        if (!lineas || lineas.length === 0) return;
+        if (y > 240) { doc.addPage(); y = 20; }
+        doc.setFont("helvetica", "bold"); doc.setFontSize(11);
+        doc.text(titulo, 15, y); y += 5;
+        doc.setFillColor(230); doc.rect(15, y - 4, 180, 6, "F");
+        doc.setFont("helvetica", "bold"); doc.setFontSize(8);
+        doc.text("Cant", 17, y); doc.text("Ref", 32, y); doc.text("Descripción", 60, y);
+        doc.text("P.unit", 152, y, { align: "right" }); doc.text("Importe", 192, y, { align: "right" }); y += 4;
+        doc.setFont("helvetica", "normal");
+        lineas.forEach(l => {
+          if (y > 270) { doc.addPage(); y = 20; }
+          const desc = l.desc.length > 50 ? l.desc.substring(0, 48) + ".." : l.desc;
+          doc.text(String(l.cantidad), 17, y); doc.text(String(l.ref || "—"), 32, y);
+          doc.text(desc, 60, y);
+          doc.text("€" + l.precioUnit.toFixed(2), 152, y, { align: "right" });
+          doc.text("€" + l.importe.toFixed(2), 192, y, { align: "right" }); y += 4;
+        });
+        y += 2; doc.line(120, y, 195, y); y += 4;
+        doc.setFont("helvetica", "normal"); doc.setFontSize(8);
+        doc.text(`Subtotal: €${total.toFixed(2)}`, 192, y, { align: "right" }); y += 4;
+        doc.text(`IVA 21%:  €${iva.toFixed(2)}`, 192, y, { align: "right" }); y += 4;
+        doc.setFont("helvetica", "bold");
+        doc.text(`TOTAL:    €${(total + iva).toFixed(2)}`, 192, y, { align: "right" }); y += 4;
+        doc.setFont("helvetica", "italic"); doc.setFontSize(7);
+        doc.text(`Forma de pago: ${formaPago}`, 192, y, { align: "right" }); y += 6;
+      };
+
+      pintarSeccion("AQUATUBO SL", d.lineasAqua, d.totalAqua, d.ivaAqua, "60 días · Recibo domiciliado");
+      pintarSeccion("ARAMBURU GUZMÁN SLU", d.lineasAram, d.totalAram, d.ivaAram, "Contado");
+
+      // No listados agrupados por proveedor
+      const todosNoList = d.lineasNoListado || [];
+      if (todosNoList.length > 0) {
+        if (y > 240) { doc.addPage(); y = 20; }
+        doc.setFont("helvetica", "bold"); doc.setFontSize(11);
+        doc.text("PRODUCTOS NO LISTADOS — CONFIRMAR PRECIO", 15, y); y += 5;
+        doc.setFont("helvetica", "normal"); doc.setFontSize(9);
+        todosNoList.forEach(l => {
+          const provLabel = l.proveedor === "aqua" ? "Aquatubo"
+            : l.proveedor === "aram" ? "Aramburu"
+            : l.proveedor === "indistinto" ? "Cualquiera"
+            : l.proveedor;
+          doc.text(`· ${l.cantidad} ${l.unidad}: ${l.desc} (${provLabel})`, 15, y); y += 4;
+        });
+        y += 4;
+      }
+
+      if (d.notas) {
+        if (y > 240) { doc.addPage(); y = 20; }
+        doc.setFont("helvetica", "bold"); doc.setFontSize(11);
+        doc.text("NOTAS DEL OPERARIO", 15, y); y += 5;
+        doc.setFont("helvetica", "normal"); doc.setFontSize(9);
+        const ln = doc.splitTextToSize(d.notas, 175);
+        doc.text(ln, 15, y); y += ln.length * 4 + 4;
+      }
+
+      if (y > 250) { doc.addPage(); y = 20; }
+      doc.setFillColor(255, 200, 0); doc.rect(15, y, 180, 12, "F");
+      doc.setFont("helvetica", "bold"); doc.setFontSize(14);
+      doc.text(`TOTAL GENERAL: €${(d.totalGeneral * 1.21).toFixed(2)} IVA inc.`, 105, y + 8, { align: "center" });
+      y += 18;
+      doc.setFont("helvetica", "italic"); doc.setFontSize(8);
+      doc.text("Documento generado automáticamente desde el sistema interno de pedidos ARA.", 15, y);
+
+      const fname = `Pedido_ARA_COMPLETO_${d.obra.nombre.replace(/[^a-z0-9]/gi, "_")}_${new Date(d.fechaIso).toISOString().slice(0,10)}.pdf`;
+      doc.save(fname);
+      return;
+    }
+
     const esAqua = proveedor === "aqua";
     const esAram = proveedor === "aram";
     const esIndistinto = proveedor === "indistinto";
-    const esCustom = !esAqua && !esAram && !esIndistinto;
 
     const nombreProv = esAqua ? "AQUATUBO SL"
       : esAram ? "ARAMBURU GUZMÁN SLU"
@@ -2270,45 +2397,52 @@ function CatalogoApp({ usuario, onLogout }) {
               Comparte el pedido con tus proveedores:
             </div>
 
-            {/* Botones PDF por proveedor */}
+            {/* ── PDFs ── */}
+            <div className="text-[10px] font-bold tracking-widest text-stone-500 pt-1">📄 DESCARGAR PDF</div>
+
             {tieneAqua && (
               <button onClick={() => descargarPDF("aqua")}
-                      className="w-full bg-stone-900 text-amber-400 p-4 font-black text-sm tracking-widest border-2 border-stone-900 hover:bg-amber-400 hover:text-stone-900 transition-all flex items-center justify-center gap-2"
+                      className="w-full bg-stone-900 text-amber-400 p-3 font-black text-xs tracking-widest border-2 border-stone-900 hover:bg-amber-400 hover:text-stone-900 transition-all flex items-center justify-center gap-2"
                       style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
-                📄 PDF AQUATUBO
+                📄 AQUATUBO
               </button>
             )}
             {tieneAram && (
               <button onClick={() => descargarPDF("aram")}
-                      className="w-full bg-stone-700 text-amber-400 p-4 font-black text-sm tracking-widest border-2 border-stone-900 hover:bg-amber-400 hover:text-stone-900 transition-all flex items-center justify-center gap-2"
+                      className="w-full bg-stone-700 text-amber-400 p-3 font-black text-xs tracking-widest border-2 border-stone-900 hover:bg-amber-400 hover:text-stone-900 transition-all flex items-center justify-center gap-2"
                       style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
-                📄 PDF ARAMBURU
+                📄 ARAMBURU
               </button>
             )}
-
-            {/* Botones PDF proveedores custom */}
             {proveedoresCustom.map(prov => (
               <button key={prov} onClick={() => descargarPDF(prov)}
-                      className="w-full bg-blue-700 text-white p-4 font-black text-sm tracking-widest border-2 border-stone-900 hover:bg-blue-800 transition-all flex items-center justify-center gap-2"
+                      className="w-full bg-blue-700 text-white p-3 font-black text-xs tracking-widest border-2 border-stone-900 hover:bg-blue-800 transition-all flex items-center justify-center gap-2"
                       style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
-                {`📄 PDF ${prov.toUpperCase()}`}
+                {`📄 ${prov.toUpperCase()}`}
               </button>
             ))}
             {tieneIndistinto && (
               <button onClick={() => descargarPDF("indistinto")}
-                      className="w-full bg-stone-500 text-white p-4 font-black text-sm tracking-widest border-2 border-stone-900 hover:bg-stone-600 transition-all flex items-center justify-center gap-2"
+                      className="w-full bg-stone-500 text-white p-3 font-black text-xs tracking-widest border-2 border-stone-900 hover:bg-stone-600 transition-all flex items-center justify-center gap-2"
                       style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
-                📄 PDF SIN PROVEEDOR
+                📄 SIN PROVEEDOR
               </button>
             )}
+            <button onClick={() => descargarPDF("completo")}
+                    className="w-full bg-amber-500 text-stone-900 p-3 font-black text-xs tracking-widest border-2 border-stone-900 hover:bg-amber-400 transition-all flex items-center justify-center gap-2"
+                    style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+              📄 COMPLETO (TODOS LOS PROVEEDORES)
+            </button>
 
-            {/* Botones WhatsApp por proveedor */}
+            {/* ── WhatsApp ── */}
+            <div className="text-[10px] font-bold tracking-widest text-stone-500 pt-1">💬 ENVIAR POR WHATSAPP</div>
+
             {tieneAqua && (
               <a href={`https://wa.me/?text=${encodeURIComponent(generarMensajeWhatsApp("aqua"))}`}
                  target="_blank" rel="noopener noreferrer"
                  className="w-full bg-emerald-700 text-white p-3 font-black text-xs tracking-widest border-2 border-stone-900 hover:bg-emerald-800 transition-all flex items-center justify-center gap-2"
                  style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
-                💬 ENVIAR PEDIDO AQUATUBO POR WHATSAPP
+                💬 AQUATUBO
               </a>
             )}
             {tieneAram && (
@@ -2316,9 +2450,31 @@ function CatalogoApp({ usuario, onLogout }) {
                  target="_blank" rel="noopener noreferrer"
                  className="w-full bg-amber-700 text-white p-3 font-black text-xs tracking-widest border-2 border-stone-900 hover:bg-amber-800 transition-all flex items-center justify-center gap-2"
                  style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
-                💬 ENVIAR PEDIDO ARAMBURU POR WHATSAPP
+                💬 ARAMBURU
               </a>
             )}
+            {proveedoresCustom.map(prov => (
+              <a key={prov} href={`https://wa.me/?text=${encodeURIComponent(generarMensajeWhatsApp(prov))}`}
+                 target="_blank" rel="noopener noreferrer"
+                 className="w-full bg-blue-600 text-white p-3 font-black text-xs tracking-widest border-2 border-stone-900 hover:bg-blue-700 transition-all flex items-center justify-center gap-2"
+                 style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+                {`💬 ${prov.toUpperCase()}`}
+              </a>
+            ))}
+            {tieneIndistinto && (
+              <a href={`https://wa.me/?text=${encodeURIComponent(generarMensajeWhatsApp("indistinto"))}`}
+                 target="_blank" rel="noopener noreferrer"
+                 className="w-full bg-stone-500 text-white p-3 font-black text-xs tracking-widest border-2 border-stone-900 hover:bg-stone-600 transition-all flex items-center justify-center gap-2"
+                 style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+                💬 SIN PROVEEDOR
+              </a>
+            )}
+            <a href={`https://wa.me/?text=${encodeURIComponent(generarMensajeWhatsApp("completo"))}`}
+               target="_blank" rel="noopener noreferrer"
+               className="w-full bg-amber-500 text-stone-900 p-3 font-black text-xs tracking-widest border-2 border-stone-900 hover:bg-amber-400 transition-all flex items-center justify-center gap-2"
+               style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+              💬 COMPLETO (TODOS LOS PROVEEDORES)
+            </a>
 
             {datosPedidoEnviado?.errorBackend && (
               <div className="text-[10px] text-amber-700 bg-amber-50 border border-amber-700 p-2">
