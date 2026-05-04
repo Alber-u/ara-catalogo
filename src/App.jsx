@@ -1,9 +1,49 @@
-import React, { useState, useMemo, useId } from "react";
+import React, { useState, useMemo, useId, useEffect } from "react";
 import {
   Search, ShoppingCart, Plus, Minus, X, Package, Wrench, Hammer,
   Boxes, Construction, Check, Trophy,
   User, LogOut, AlertCircle
 } from "lucide-react";
+
+// =========================================================
+//  Conexión con el backend (araujo-bot/api/catalogo)
+// =========================================================
+const BACKEND_URL = "https://araujo-bot.onrender.com/api/catalogo";
+
+// Estos arrays los rellena el backend al cargar.
+// Si el backend tarda o falla, se usan los datos semilla (declarados más abajo).
+let OBRAS = [];
+let OPERARIOS = [];
+let CATALOGO = [];
+
+// Bandera global del estado de carga (la lee App() para mostrar loading)
+let datosCargados = false;
+let errorBackend = null;
+
+async function cargarDatosBackend() {
+  try {
+    const r = await fetch(BACKEND_URL + "/public");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const data = await r.json();
+    CATALOGO = Array.isArray(data.productos) ? data.productos : CATALOGO_SEED;
+    OBRAS = Array.isArray(data.obras) ? data.obras : OBRAS_SEED;
+    OPERARIOS = Array.isArray(data.operarios) ? data.operarios.map(o => o.nombre || o) : OPERARIOS_SEED;
+    // Asegurar que la opción "Otro" esté al final
+    if (!OPERARIOS.includes("Otro (escribir nombre)")) {
+      OPERARIOS = [...OPERARIOS, "Otro (escribir nombre)"];
+    }
+    datosCargados = true;
+    errorBackend = null;
+    console.log("[ARA] Datos cargados desde backend:", CATALOGO.length, "productos,", OBRAS.length, "obras,", OPERARIOS.length, "operarios");
+  } catch (e) {
+    console.warn("[ARA] No se pudo cargar del backend, usando datos locales:", e.message);
+    CATALOGO = CATALOGO_SEED;
+    OBRAS = OBRAS_SEED;
+    OPERARIOS = OPERARIOS_SEED;
+    datosCargados = true;
+    errorBackend = e.message;
+  }
+}
 
 // =========================================================
 //  ARA CORPORATE — App de pedidos de obra
@@ -18,7 +58,7 @@ import {
 // =========================================================
 
 // --- Obras activas detectadas en facturas -----------------
-const OBRAS = [
+const OBRAS_SEED = [
   { id: "JP17",   nombre: "Juan Pablos Edif. 17",          dir: "Calle Juan Pablos 17, Sevilla" },
   { id: "DF20",   nombre: "Doña Francisquita 20",          dir: "Calle Doña Francisquita 20, Sevilla" },
   { id: "OL67",   nombre: "Ntra. Sra. Oliva 67",           dir: "Bda. Nuestra Señora de la Oliva 67, Sevilla" },
@@ -37,7 +77,7 @@ const OBRAS = [
 ];
 
 // --- Operarios (lista demo, en producción vendría de BBDD) ---
-const OPERARIOS = [
+const OPERARIOS_SEED = [
   "Antonio Ramírez Romero",
   "Miguel Ángel Espada Pérez",
   "Miguel Ángel Espada Rebollo",
@@ -50,7 +90,7 @@ const OPERARIOS = [
 // --- CATÁLOGO UNIFICADO -----------------------------------
 // Cada producto puede tener precio en uno o ambos proveedores.
 // proveedores: { aqua: {bruto, dto, ref}, aram: {bruto, dto, ref} }
-const CATALOGO = [
+const CATALOGO_SEED = [
   // === MULTICAPA — alta coincidencia ===
   {
     id: "mc-tubo-25", desc: "Tubería multicapa PEX/AL/PE Ø25×2.5mm", familia: "Multicapa",
@@ -2228,6 +2268,36 @@ function CatalogoApp({ usuario, onLogout }) {
 // =========================================================
 export default function App() {
   const [usuario, setUsuario] = useState(null);
+  const [, forceUpdate] = useState(0);
+  const [cargando, setCargando] = useState(!datosCargados);
+
+  useEffect(() => {
+    if (datosCargados) return;
+    cargarDatosBackend().then(() => {
+      setCargando(false);
+      forceUpdate(n => n + 1);
+    });
+  }, []);
+
+  if (cargando) {
+    return (
+      <div className="min-h-screen bg-stone-100 flex items-center justify-center font-mono p-6"
+           style={{ backgroundImage: "repeating-linear-gradient(45deg, transparent, transparent 30px, rgba(0,0,0,0.02) 30px, rgba(0,0,0,0.02) 31px)" }}>
+        <div className="bg-amber-500 border-4 border-stone-900 p-6 shadow-[8px_8px_0_0_rgba(0,0,0,1)] max-w-md w-full text-center">
+          <div className="text-[10px] tracking-[0.3em] mb-2">ARA CORPORATE</div>
+          <h1 className="font-black text-3xl leading-none mb-3" style={{ fontFamily: "Archivo Black, Impact, sans-serif" }}>
+            CARGANDO CATÁLOGO…
+          </h1>
+          <div className="flex items-center justify-center gap-1 my-4">
+            <span className="w-2 h-2 bg-stone-900 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+            <span className="w-2 h-2 bg-stone-900 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+            <span className="w-2 h-2 bg-stone-900 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+          </div>
+          <div className="text-xs">Conectando con el sistema…</div>
+        </div>
+      </div>
+    );
+  }
 
   if (!usuario) return <PantallaLogin onLogin={setUsuario} />;
   return <CatalogoApp usuario={usuario} onLogout={() => setUsuario(null)} />;
