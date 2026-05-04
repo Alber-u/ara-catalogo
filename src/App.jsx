@@ -1846,7 +1846,7 @@ function PantallaLogin({ onLogin, onAdminClick }) {
 // =========================================================
 //  CARD DE PRODUCTO — comparativa dinámica de proveedores
 // =========================================================
-function CardProducto({ producto, cantidades, addProv, removeProv, setExacta, onClick }) {
+function CardProducto({ producto, cantidades, metrosSueltos, addProv, removeProv, setExacta, setMetrosSueltos, onClick }) {
   const ganador = proveedorMasBarato(producto);
   const provIds = Object.keys(producto.proveedores || {}).filter(k => producto.proveedores[k]);
   const tieneVarios = provIds.length > 1;
@@ -1941,15 +1941,28 @@ function CardProducto({ producto, cantidades, addProv, removeProv, setExacta, on
                       )}
                       {metros && rollosCalculados > 0 && (
                         <button
-                          onClick={(e) => { e.stopPropagation(); setExacta(provId, rollosCalculados); setMetrosInput(prev => ({...prev, [provId]: ""})); }}
+                          onClick={(e) => { e.stopPropagation(); setExacta(provId, cant + rollosCalculados); setMetrosInput(prev => ({...prev, [provId]: ""})); }}
                           className={`w-full ${COLOR_ACTIVE[col]||"bg-blue-700"} text-white text-[10px] py-1.5 font-bold tracking-wider`}>
                           + AÑADIR {rollosCalculados} {producto.unidad}{rollosCalculados > 1 ? "s" : ""}
                         </button>
                       )}
-                      {cant > 0 && (
-                        <div className="text-[9px] text-center font-bold text-stone-700">
-                          En carrito: {cant} {producto.unidad}{cant > 1 ? "s" : ""} ({cant * producto.cantidadPorUnidad}m)
-                          <button onClick={(e) => { e.stopPropagation(); setExacta(provId, 0); }} className="ml-2 text-red-600">✕</button>
+                      {/* Metros sueltos */}
+                      <div className="flex items-center gap-1 mt-1">
+                        <input
+                          type="number" min="0" placeholder="m sueltos"
+                          value={metrosSueltos[provId] || ""}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => { const v = parseFloat(e.target.value); setMetrosSueltos(provId, isNaN(v) ? 0 : v); }}
+                          className="flex-1 border-2 border-stone-900 p-1 text-xs font-mono text-center focus:outline-none focus:bg-amber-50"
+                        />
+                        <span className="text-[10px] font-bold text-stone-500">m sueltos</span>
+                      </div>
+                      {(cant > 0 || (metrosSueltos[provId] || 0) > 0) && (
+                        <div className="text-[9px] text-center font-bold text-stone-700 mt-0.5">
+                          {cant > 0 && <span>{cant} {producto.unidad}{cant > 1 ? "s" : ""} ({cant * producto.cantidadPorUnidad}m)</span>}
+                          {cant > 0 && (metrosSueltos[provId] || 0) > 0 && <span> + </span>}
+                          {(metrosSueltos[provId] || 0) > 0 && <span>{metrosSueltos[provId]}m sueltos</span>}
+                          <button onClick={(e) => { e.stopPropagation(); setExacta(provId, 0); setMetrosSueltos(provId, 0); }} className="ml-2 text-red-600">✕</button>
                         </div>
                       )}
                     </div>
@@ -2035,12 +2048,19 @@ function CatalogoApp({ usuario, onLogout }) {
     });
   }, [familia, busqueda]);
 
+  // carrito: { "id:prov": rollos, "id:prov:m": metros_sueltos }
   const getCant = (id, prov) => carrito[`${id}:${prov}`] || 0;
+  const getMetros = (id, prov) => carrito[`${id}:${prov}:m`] || 0;
   const setCant = (id, prov, fn) => setCarrito(c => {
     const k = `${id}:${prov}`;
     const nuevo = fn(c[k] || 0);
     if (nuevo <= 0) { const r = {...c}; delete r[k]; return r; }
     return { ...c, [k]: nuevo };
+  });
+  const setMetrosSueltos = (id, prov, metros) => setCarrito(c => {
+    const k = `${id}:${prov}:m`;
+    if (!metros || metros <= 0) { const r = {...c}; delete r[k]; return r; }
+    return { ...c, [k]: metros };
   });
   const addProv = (id, prov) => setCant(id, prov, n => n + 1);
   const removeProv = (id, prov) => setCant(id, prov, n => Math.max(0, n - 1));
@@ -2048,20 +2068,30 @@ function CatalogoApp({ usuario, onLogout }) {
 
   // Cálculos del carrito
   const lineasCarrito = useMemo(() => {
-    return Object.entries(carrito).map(([k, cant]) => {
-      const [id, prov] = k.split(":");
+    const lines = [];
+    Object.entries(carrito).forEach(([k, cant]) => {
+      const parts = k.split(":");
+      const esMetros = parts.length === 3 && parts[2] === "m";
+      const id = parts[0];
+      const prov = parts[1];
       const p = CATALOGO.find(x => x.id === id);
-      if (!p || !p.proveedores[prov]) return null;
+      if (!p || !p.proveedores[prov]) return;
       const proveedor = p.proveedores[prov];
       const neto = precioNeto(proveedor);
-      // Para rollo/barra: precio es €/m, multiplicar por metros por unidad
-      const mPorUnidad = (p.cantidadPorUnidad && (p.unidad === "rollo" || p.unidad === "barra")) ? p.cantidadPorUnidad : 1;
-      const subtotal = +(neto * mPorUnidad * cant).toFixed(2);
-      return {
-        id, prov, producto: p, proveedor, cantidad: cant, neto, mPorUnidad,
-        subtotal
-      };
-    }).filter(Boolean);
+      const esRolloBarra = p.cantidadPorUnidad && (p.unidad === "rollo" || p.unidad === "barra");
+
+      if (esMetros && esRolloBarra) {
+        // Línea de metros sueltos
+        const subtotal = +(neto * cant).toFixed(2);
+        lines.push({ id, prov, producto: p, proveedor, cantidad: cant, neto, mPorUnidad: 1, subtotal, esMetrosSueltos: true, keyCarrito: k });
+      } else {
+        // Línea de rollos/barras o unidades normales
+        const mPorUnidad = esRolloBarra ? p.cantidadPorUnidad : 1;
+        const subtotal = +(neto * mPorUnidad * cant).toFixed(2);
+        lines.push({ id, prov, producto: p, proveedor, cantidad: cant, neto, mPorUnidad, subtotal, esMetrosSueltos: false, keyCarrito: k });
+      }
+    });
+    return lines;
   }, [carrito]);
 
   const totalAqua = lineasCarrito.filter(l => l.prov === "aqua").reduce((s, l) => s + l.subtotal, 0);
@@ -2141,14 +2171,22 @@ function CatalogoApp({ usuario, onLogout }) {
         operario: usuario.nombre,
         obra: usuario.obra,
         lineasAqua: lineasCarrito.filter(l => l.prov === "aqua").map(l => ({
-          ref: l.proveedor.ref, desc: l.producto.desc, cantidad: l.cantidad,
-          unidad: l.producto.unidad, precioUnit: l.neto, importe: l.subtotal,
-          mPorUnidad: l.mPorUnidad, metros: l.mPorUnidad > 1 ? +(l.cantidad * l.mPorUnidad).toFixed(1) : null
+          ref: l.proveedor.ref,
+          desc: l.esMetrosSueltos ? `${l.producto.desc} (metros sueltos)` : l.producto.desc,
+          cantidad: l.cantidad,
+          unidad: l.esMetrosSueltos ? "m" : l.producto.unidad,
+          precioUnit: l.neto, importe: l.subtotal,
+          mPorUnidad: l.mPorUnidad,
+          metros: !l.esMetrosSueltos && l.mPorUnidad > 1 ? +(l.cantidad * l.mPorUnidad).toFixed(1) : null
         })),
         lineasAram: lineasCarrito.filter(l => l.prov === "aram").map(l => ({
-          ref: l.proveedor.ref, desc: l.producto.desc, cantidad: l.cantidad,
-          unidad: l.producto.unidad, precioUnit: l.neto, importe: l.subtotal,
-          mPorUnidad: l.mPorUnidad, metros: l.mPorUnidad > 1 ? +(l.cantidad * l.mPorUnidad).toFixed(1) : null
+          ref: l.proveedor.ref,
+          desc: l.esMetrosSueltos ? `${l.producto.desc} (metros sueltos)` : l.producto.desc,
+          cantidad: l.cantidad,
+          unidad: l.esMetrosSueltos ? "m" : l.producto.unidad,
+          precioUnit: l.neto, importe: l.subtotal,
+          mPorUnidad: l.mPorUnidad,
+          metros: !l.esMetrosSueltos && l.mPorUnidad > 1 ? +(l.cantidad * l.mPorUnidad).toFixed(1) : null
         })),
         lineasNoListado: lineasNoListadas,
         notas: notasPedido,
@@ -2740,9 +2778,11 @@ function CatalogoApp({ usuario, onLogout }) {
               key={p.id}
               producto={p}
               cantidades={Object.fromEntries(PROVEEDORES.map(pv => [pv.id, getCant(p.id, pv.id)]))}
+              metrosSueltos={Object.fromEntries(PROVEEDORES.map(pv => [pv.id, getMetros(p.id, pv.id)]))}
               addProv={(provId) => addProv(p.id, provId)}
               removeProv={(provId) => removeProv(p.id, provId)}
               setExacta={(provId, n) => setExacta(p.id, provId, n)}
+              setMetrosSueltos={(provId, m) => setMetrosSueltos(p.id, provId, m)}
               onClick={() => setProductoSel(p)}
             />
           ))}
