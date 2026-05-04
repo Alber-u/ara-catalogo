@@ -1852,6 +1852,16 @@ function CardProducto({ producto, cantidades, addProv, removeProv, setExacta, on
   const tieneVarios = provIds.length > 1;
   const cols = Math.max(provIds.length, 1);
 
+  // Para rollo/barra: modo de pedido (por unidad o por metros)
+  const esRolloBarra = producto.cantidadPorUnidad && (producto.unidad === "rollo" || producto.unidad === "barra");
+  const [modoPedido, setModoPedido] = useState("unidad"); // "unidad" | "metros"
+  const [metrosInput, setMetrosInput] = useState({});
+
+  const rollosDesdeMetros = (m) => {
+    if (!producto.cantidadPorUnidad || !m) return 0;
+    return Math.ceil(m / producto.cantidadPorUnidad);
+  };
+
   return (
     <div className="bg-white border-2 border-stone-900 hover:shadow-[6px_6px_0_0_rgba(0,0,0,1)] transition-all">
       <button onClick={onClick} className="block w-full text-left">
@@ -1864,6 +1874,22 @@ function CardProducto({ producto, cantidades, addProv, removeProv, setExacta, on
         </div>
       </button>
 
+      {/* Selector de modo para rollo/barra */}
+      {esRolloBarra && (
+        <div className="flex border-t-2 border-b-2 border-stone-900" onClick={(e) => e.stopPropagation()}>
+          <button
+            onClick={(e) => { e.stopPropagation(); setModoPedido("unidad"); }}
+            className={`flex-1 py-1.5 text-[10px] font-black tracking-widest transition-all ${modoPedido === "unidad" ? "bg-stone-900 text-amber-400" : "bg-white text-stone-600 hover:bg-stone-100"}`}>
+            POR {producto.unidad.toUpperCase()}S
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); setModoPedido("metros"); }}
+            className={`flex-1 py-1.5 text-[10px] font-black tracking-widest border-l-2 border-stone-900 transition-all ${modoPedido === "metros" ? "bg-stone-900 text-amber-400" : "bg-white text-stone-600 hover:bg-stone-100"}`}>
+            POR METROS
+          </button>
+        </div>
+      )}
+
       <div className="grid border-t-2 border-stone-900" style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}>
         {provIds.length === 0 ? (
           <div className="p-3 text-stone-400 text-[10px] italic">Sin precio</div>
@@ -1873,6 +1899,9 @@ function CardProducto({ producto, cantidades, addProv, removeProv, setExacta, on
           const cant = cantidades[provId] || 0;
           const col = getProvColor(provId);
           const esGanador = ganador === provId && tieneVarios;
+          const metros = metrosInput[provId] || "";
+          const rollosCalculados = rollosDesdeMetros(parseFloat(metros));
+
           return (
             <div key={provId} className={`p-3 ${idx < provIds.length - 1 ? "border-r-2 border-stone-900" : ""} ${esGanador ? (COLOR_BG[col]||"bg-blue-50") : "bg-stone-50"}`}>
               <div className="flex items-center justify-between mb-1">
@@ -1884,29 +1913,73 @@ function CardProducto({ producto, cantidades, addProv, removeProv, setExacta, on
                   <div className="font-black text-lg text-stone-900 leading-none mt-1" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
                     €{neto.toFixed(2)}
                   </div>
-                  <div className="font-mono text-[9px] text-stone-500 mb-1">/{producto.unidad}</div>
-                  {producto.cantidadPorUnidad && (
-                    <div className="text-[9px] text-stone-400 mb-1">1 {producto.unidad} = {producto.cantidadPorUnidad}m</div>
+                  {esRolloBarra ? (
+                    <div className="font-mono text-[9px] text-stone-500 mb-1">
+                      €/m · 1 {producto.unidad} = €{(neto * producto.cantidadPorUnidad).toFixed(2)}
+                    </div>
+                  ) : (
+                    <div className="font-mono text-[9px] text-stone-500 mb-1">/{producto.unidad}</div>
                   )}
-                  <div className="flex items-center justify-between">
-                    {cant === 0 ? (
-                      <button onClick={(e) => { e.stopPropagation(); addProv(provId); }}
-                              className="w-full bg-stone-900 text-white text-[10px] py-1.5 font-bold tracking-wider hover:opacity-80 transition-opacity">
-                        + AÑADIR
-                      </button>
-                    ) : (
-                      <div className={`flex items-center w-full justify-between ${COLOR_ACTIVE[col]||"bg-blue-700"} text-white px-1 py-1 gap-1`}>
-                        <button onClick={(e) => { e.stopPropagation(); removeProv(provId); }} className="p-0.5"><Minus className="w-3 h-3" /></button>
+
+                  {/* Control de cantidad */}
+                  {esRolloBarra && modoPedido === "metros" ? (
+                    // Modo metros
+                    <div onClick={(e) => e.stopPropagation()} className="space-y-1">
+                      <div className="flex items-center gap-1">
                         <input
-                          type="number" min="0" value={cant}
-                          onClick={(e) => e.stopPropagation()}
-                          onChange={(e) => { const v = parseInt(e.target.value); if (!isNaN(v)) setExacta(provId, v); }}
-                          className="w-10 text-center font-mono text-xs font-bold bg-stone-800 text-white border border-stone-500 focus:outline-none rounded-none"
+                          type="number" min="0" placeholder="m"
+                          value={metros}
+                          onChange={(e) => setMetrosInput(prev => ({...prev, [provId]: e.target.value}))}
+                          className="w-full border-2 border-stone-900 p-1.5 text-xs font-mono text-center focus:outline-none focus:bg-amber-50"
                         />
-                        <button onClick={(e) => { e.stopPropagation(); addProv(provId); }} className="p-0.5"><Plus className="w-3 h-3" /></button>
+                        <span className="text-[10px] font-bold text-stone-600 whitespace-nowrap">m</span>
                       </div>
-                    )}
-                  </div>
+                      {metros && rollosCalculados > 0 && (
+                        <div className="text-[9px] text-stone-600">
+                          = {rollosCalculados} {producto.unidad}{rollosCalculados > 1 ? "s" : ""} ({rollosCalculados * producto.cantidadPorUnidad}m)
+                        </div>
+                      )}
+                      {metros && rollosCalculados > 0 && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setExacta(provId, rollosCalculados); setMetrosInput(prev => ({...prev, [provId]: ""})); }}
+                          className={`w-full ${COLOR_ACTIVE[col]||"bg-blue-700"} text-white text-[10px] py-1.5 font-bold tracking-wider`}>
+                          + AÑADIR {rollosCalculados} {producto.unidad}{rollosCalculados > 1 ? "s" : ""}
+                        </button>
+                      )}
+                      {cant > 0 && (
+                        <div className="text-[9px] text-center font-bold text-stone-700">
+                          En carrito: {cant} {producto.unidad}{cant > 1 ? "s" : ""} ({cant * producto.cantidadPorUnidad}m)
+                          <button onClick={(e) => { e.stopPropagation(); setExacta(provId, 0); }} className="ml-2 text-red-600">✕</button>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    // Modo unidad (rollos/barras o productos normales)
+                    <div className="flex items-center justify-between">
+                      {cant === 0 ? (
+                        <button onClick={(e) => { e.stopPropagation(); addProv(provId); }}
+                                className="w-full bg-stone-900 text-white text-[10px] py-1.5 font-bold tracking-wider hover:opacity-80 transition-opacity">
+                          + AÑADIR
+                        </button>
+                      ) : (
+                        <div className={`flex flex-col w-full gap-0.5`}>
+                          <div className={`flex items-center w-full justify-between ${COLOR_ACTIVE[col]||"bg-blue-700"} text-white px-1 py-1 gap-1`}>
+                            <button onClick={(e) => { e.stopPropagation(); removeProv(provId); }} className="p-0.5"><Minus className="w-3 h-3" /></button>
+                            <input
+                              type="number" min="0" value={cant}
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={(e) => { const v = parseInt(e.target.value); if (!isNaN(v)) setExacta(provId, v); }}
+                              className="w-10 text-center font-mono text-xs font-bold bg-stone-800 text-white border border-stone-500 focus:outline-none rounded-none"
+                            />
+                            <button onClick={(e) => { e.stopPropagation(); addProv(provId); }} className="p-0.5"><Plus className="w-3 h-3" /></button>
+                          </div>
+                          {esRolloBarra && (
+                            <div className="text-[9px] text-center text-stone-500">{cant * producto.cantidadPorUnidad}m en total</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </>
               ) : (
                 <div className="font-mono text-[10px] text-stone-400 italic mt-2">No disponible</div>
@@ -1925,7 +1998,7 @@ function CardProducto({ producto, cantidades, addProv, removeProv, setExacta, on
         const col = getProvColor(ganador);
         return (
           <div className={`px-3 py-1.5 text-[10px] font-bold tracking-wider border-t-2 border-stone-900 ${COLOR_BG[col]||"bg-blue-50"} ${COLOR_TEXT[col]||"text-blue-900"}`}>
-            AHORRO {pct}% · €{(max - min).toFixed(2)}/u con {getProvNombre(ganador)}
+            AHORRO {pct}% · €{(max - min).toFixed(2)}/m con {getProvNombre(ganador)}
           </div>
         );
       })()}
@@ -4365,10 +4438,7 @@ function ModalEditarProducto({ producto, api, reload, onCerrar, plantillaInicial
                 </div>
                 {neto !== null && (
                   <div className={`mt-2 text-xs font-bold ${COLOR_TEXT[col]||"text-blue-900"}`}>
-                    {cantPorUnidad && (unidad === "rollo" || unidad === "barra")
-                      ? `€${neto}/m · 1 ${unidad} = €${(neto * parseFloat(cantPorUnidad)).toFixed(2)}`
-                      : `Precio neto = €${neto}/${unidad}`
-                    }
+                    Precio neto = €{neto}/{unidad}
                   </div>
                 )}
               </div>
