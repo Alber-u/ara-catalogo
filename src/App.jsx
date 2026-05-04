@@ -11,6 +11,11 @@ import {
 const BACKEND_URL = "https://araujo-bot.onrender.com/api/catalogo";
 
 // Estos arrays los rellena el backend al cargar.
+const PROVEEDORES_SEED = [
+  { id: "aqua", nombre: "Aquatubo SL",         formaPago: "60 días · Recibo domiciliado", email: "", activo: true, color: "emerald" },
+  { id: "aram", nombre: "Aramburu Guzmán SLU", formaPago: "Contado",                     email: "", activo: true, color: "amber"   },
+];
+
 // Si el backend tarda o falla, se usan los datos semilla (declarados más abajo).
 let OBRAS = [];
 let OPERARIOS = [];
