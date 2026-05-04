@@ -2132,7 +2132,8 @@ function CatalogoApp({ usuario, onLogout }) {
           unidad: l.esMetrosSueltos ? "m" : l.producto.unidad,
           precioUnit: l.neto, importe: l.subtotal,
           mPorUnidad: l.mPorUnidad,
-          metros: l.metros
+          metros: l.metros,
+          esMetrosSueltos: !!l.esMetrosSueltos
         })),
         lineasAram: lineasCarrito.filter(l => l.prov === "aram").map(l => ({
           ref: l.proveedor.ref,
@@ -2141,7 +2142,8 @@ function CatalogoApp({ usuario, onLogout }) {
           unidad: l.esMetrosSueltos ? "m" : l.producto.unidad,
           precioUnit: l.neto, importe: l.subtotal,
           mPorUnidad: l.mPorUnidad,
-          metros: l.metros
+          metros: l.metros,
+          esMetrosSueltos: !!l.esMetrosSueltos
         })),
         lineasNoListado: lineasNoListadas,
         notas: notasPedido,
@@ -2268,7 +2270,7 @@ function CatalogoApp({ usuario, onLogout }) {
           doc.text("€" + l.importe.toFixed(2), 192, y, { align: "right" }); y += 3.5;
           // Segunda línea: info rollos o metros sueltos
           if (l.metros || l.esMetrosSueltos) {
-            const nota = l.esMetrosSueltos ? "→ metros sueltos" : `→ ${l.cantidad} ${l.unidad} · ${l.metros}m`;
+            const nota = l.esMetrosSueltos ? ">> metros sueltos" : `>> ${l.cantidad} ${l.unidad} (${l.metros}m)`;
             doc.setFont("helvetica", "italic"); doc.setFontSize(7);
             doc.setTextColor(100);
             doc.text(nota, 62, y); y += 3.5;
@@ -2419,7 +2421,7 @@ function CatalogoApp({ usuario, onLogout }) {
         doc.text("€" + l.importe.toFixed(2), 192, y, { align: "right" });
         y += 3.5;
         if (l.metros || l.esMetrosSueltos) {
-          const nota = l.esMetrosSueltos ? "→ metros sueltos" : `→ ${l.cantidad} ${l.unidad} · ${l.metros}m`;
+          const nota = l.esMetrosSueltos ? ">> metros sueltos" : `>> ${l.cantidad} ${l.unidad} (${l.metros}m)`;
           doc.setFont("helvetica", "italic"); doc.setFontSize(7);
           doc.setTextColor(100);
           doc.text(nota, 62, y); y += 3.5;
