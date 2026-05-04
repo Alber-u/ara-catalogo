@@ -27,10 +27,11 @@ async function cargarDatosBackend() {
     const data = await r.json();
     CATALOGO = Array.isArray(data.productos) ? data.productos : CATALOGO_SEED;
     OBRAS = Array.isArray(data.obras) ? data.obras : OBRAS_SEED;
-    OPERARIOS = Array.isArray(data.operarios) ? data.operarios.map(o => o.nombre || o) : OPERARIOS_SEED;
-    // Asegurar que la opción "Otro" esté al final
-    if (!OPERARIOS.includes("Otro (escribir nombre)")) {
-      OPERARIOS = [...OPERARIOS, "Otro (escribir nombre)"];
+    // Guardamos objetos completos {id, nombre, pin, activo} para poder validar PIN en login
+    OPERARIOS = Array.isArray(data.operarios) ? data.operarios : OPERARIOS_SEED;
+    // Asegurar que la opción "Otro" esté al final (como objeto especial)
+    if (!OPERARIOS.find(o => (o.nombre || o) === "Otro (escribir nombre)")) {
+      OPERARIOS = [...OPERARIOS, { id: "otro", nombre: "Otro (escribir nombre)", pin: null }];
     }
     datosCargados = true;
     errorBackend = null;
@@ -78,13 +79,13 @@ const OBRAS_SEED = [
 
 // --- Operarios (lista demo, en producción vendría de BBDD) ---
 const OPERARIOS_SEED = [
-  "Antonio Ramírez Romero",
-  "Miguel Ángel Espada Pérez",
-  "Miguel Ángel Espada Rebollo",
-  "Juan García",
-  "Pedro Fernández",
-  "Manuel López",
-  "Otro (escribir nombre)"
+  { id: "op1", nombre: "Antonio Ramírez Romero",      pin: null, activo: true },
+  { id: "op2", nombre: "Miguel Ángel Espada Pérez",   pin: null, activo: true },
+  { id: "op3", nombre: "Miguel Ángel Espada Rebollo", pin: null, activo: true },
+  { id: "op4", nombre: "Juan García",                 pin: null, activo: true },
+  { id: "op5", nombre: "Pedro Fernández",             pin: null, activo: true },
+  { id: "op6", nombre: "Manuel López",                pin: null, activo: true },
+  { id: "otro", nombre: "Otro (escribir nombre)",     pin: null, activo: true },
 ];
 
 // --- CATÁLOGO UNIFICADO -----------------------------------
@@ -1590,21 +1591,51 @@ const TagProveedor = ({ tipo, size = "md" }) => {
 //  PANTALLA DE LOGIN
 // =========================================================
 function PantallaLogin({ onLogin, onAdminClick }) {
-  const [nombre, setNombre] = useState("");
+  const [operarioId, setOperarioId] = useState("");
   const [obraId, setObraId] = useState("");
   const [nombrePersonalizado, setNombrePersonalizado] = useState("");
+  const [pin, setPin] = useState("");
+  const [errorPin, setErrorPin] = useState("");
   const [crearObraAbierto, setCrearObraAbierto] = useState(false);
   const [nuevaObraNombre, setNuevaObraNombre] = useState("");
   const [nuevaObraDir, setNuevaObraDir] = useState("");
   const [creandoObra, setCreandoObra] = useState(false);
   const [errorCreaObra, setErrorCreaObra] = useState("");
 
-  const nombreEfectivo = nombre === "Otro (escribir nombre)" ? nombrePersonalizado : nombre;
-  const puedeEntrar = nombreEfectivo.trim().length > 1 && obraId;
+  const operarioObj = OPERARIOS.find(o => (o.id || o) === operarioId);
+  const esOtro = operarioObj?.nombre === "Otro (escribir nombre)";
+  const nombreEfectivo = esOtro ? nombrePersonalizado : (operarioObj?.nombre || "");
+  const tienePinAsignado = operarioObj && operarioObj.tienePin;
+  const puedeEntrar = nombreEfectivo.trim().length > 1 && obraId &&
+    (!tienePinAsignado || pin.length >= 4);
   const puedeCrearObra = nuevaObraNombre.trim().length > 2 && !creandoObra;
 
-  const handleSubmit = () => {
-    if (!puedeEntrar) return;
+  const [validando, setValidando] = useState(false);
+
+  const handleSubmit = async () => {
+    if (!puedeEntrar || validando) return;
+    if (tienePinAsignado) {
+      setValidando(true);
+      try {
+        const r = await fetch(BACKEND_URL + "/operario/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ operarioId: operarioObj.id, pin })
+        });
+        const data = await r.json();
+        if (!data.ok) {
+          setErrorPin("PIN incorrecto");
+          setPin("");
+          return;
+        }
+      } catch (e) {
+        setErrorPin("Error de conexión. Inténtalo de nuevo.");
+        return;
+      } finally {
+        setValidando(false);
+      }
+    }
+    setErrorPin("");
     const obra = OBRAS.find(o => o.id === obraId);
     onLogin({ nombre: nombreEfectivo, obra });
   };
@@ -1656,14 +1687,16 @@ function PantallaLogin({ onLogin, onAdminClick }) {
               <User className="w-3 h-3" /> NOMBRE DEL OPERARIO
             </label>
             <select
-              value={nombre}
-              onChange={(e) => setNombre(e.target.value)}
+              value={operarioId}
+              onChange={(e) => { setOperarioId(e.target.value); setPin(""); setErrorPin(""); }}
               className="w-full border-2 border-stone-900 bg-white p-3 text-sm focus:outline-none focus:bg-amber-50 font-mono"
             >
               <option value="">— Selecciona quién eres —</option>
-              {OPERARIOS.map(op => <option key={op} value={op}>{op}</option>)}
+              {OPERARIOS.filter(op => op.activo !== false).map(op => (
+                <option key={op.id || op.nombre} value={op.id || op.nombre}>{op.nombre || op}</option>
+              ))}
             </select>
-            {nombre === "Otro (escribir nombre)" && (
+            {esOtro && (
               <input
                 type="text"
                 placeholder="Tu nombre y apellido"
@@ -1671,6 +1704,30 @@ function PantallaLogin({ onLogin, onAdminClick }) {
                 onChange={(e) => setNombrePersonalizado(e.target.value)}
                 className="w-full border-2 border-stone-900 bg-amber-50 p-3 mt-2 text-sm focus:outline-none font-mono"
               />
+            )}
+            {operarioId && tienePinAsignado && (
+              <div className="mt-2">
+                <label className="font-bold text-[10px] tracking-widest text-stone-600 mb-1 block">
+                  🔑 TU PIN
+                </label>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={8}
+                  placeholder="••••"
+                  value={pin}
+                  onChange={(e) => { setPin(e.target.value.replace(/\D/g,"")); setErrorPin(""); }}
+                  onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+                  className={`w-full border-2 p-3 text-sm focus:outline-none font-mono tracking-widest text-center text-xl ${
+                    errorPin ? "border-red-600 bg-red-50" : "border-stone-900 bg-amber-50"
+                  }`}
+                  autoFocus
+                />
+                {errorPin && (
+                  <div className="text-[11px] text-red-700 font-bold mt-1">{errorPin}</div>
+                )}
+              </div>
             )}
           </div>
 
@@ -1746,7 +1803,7 @@ function PantallaLogin({ onLogin, onAdminClick }) {
             }`}
             style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}
           >
-            ENTRAR AL CATÁLOGO →
+            {validando ? "VERIFICANDO…" : "ENTRAR AL CATÁLOGO →"}
           </button>
 
           <div className="text-[10px] text-stone-500 leading-relaxed border-t-2 border-stone-200 pt-3">
@@ -4510,16 +4567,20 @@ function ModalEditarObra({ obra, api, reload, onCerrar }) {
 // =========================================================
 function PestañaOperarios({ data, api, reload }) {
   const [nombre, setNombre] = useState("");
+  const [pinNuevo, setPinNuevo] = useState("");
   const [añadiendo, setAñadiendo] = useState(false);
+  const [editandoPin, setEditandoPin] = useState(null); // id del operario editando pin
+  const [pinEdit, setPinEdit] = useState("");
 
   const operarios = data.operarios || [];
 
   const handleAdd = async () => {
     if (!nombre.trim() || nombre === "Otro (escribir nombre)") return;
+    if (pinNuevo && !/^\d{4,8}$/.test(pinNuevo)) { alert("El PIN debe ser de 4 a 8 dígitos"); return; }
     setAñadiendo(true);
     try {
-      await api.post("/admin/operario", { nombre: nombre.trim(), activo: true });
-      setNombre("");
+      await api.post("/admin/operario", { nombre: nombre.trim(), activo: true, pin: pinNuevo || null });
+      setNombre(""); setPinNuevo("");
       reload();
     } finally {
       setAñadiendo(false);
@@ -4534,15 +4595,27 @@ function PestañaOperarios({ data, api, reload }) {
     await api.del("/admin/operario/" + op.id);
     reload();
   };
+  const handleGuardarPin = async (op) => {
+    if (pinEdit && !/^\d{4,8}$/.test(pinEdit)) { alert("El PIN debe ser de 4 a 8 dígitos"); return; }
+    await api.put("/admin/operario/" + op.id, { pin: pinEdit || null });
+    setEditandoPin(null); setPinEdit("");
+    reload();
+  };
 
   return (
     <div className="space-y-4">
       <div className="bg-white border-2 border-stone-900 p-3">
         <div className="text-[10px] tracking-widest font-bold text-stone-700 mb-2">AÑADIR OPERARIO</div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 mb-2">
           <input type="text" value={nombre} onChange={(e) => setNombre(e.target.value)}
                  placeholder="Nombre completo del operario"
                  onKeyDown={(e) => e.key === "Enter" && handleAdd()}
+                 className="flex-1 border-2 border-stone-900 p-2 text-sm focus:bg-amber-50 focus:outline-none font-mono" />
+        </div>
+        <div className="flex gap-2">
+          <input type="password" value={pinNuevo} onChange={(e) => setPinNuevo(e.target.value.replace(/\D/g,""))}
+                 placeholder="PIN (4-8 dígitos, opcional)"
+                 maxLength={8}
                  className="flex-1 border-2 border-stone-900 p-2 text-sm focus:bg-amber-50 focus:outline-none font-mono" />
           <button onClick={handleAdd} disabled={añadiendo || nombre.trim().length < 2}
                   className={`px-4 py-2 text-xs font-black tracking-widest border-2 border-stone-900 ${
@@ -4558,21 +4631,46 @@ function PestañaOperarios({ data, api, reload }) {
 
       <div className="bg-white border-2 border-stone-900 divide-y divide-stone-200">
         {operarios.map(op => (
-          <div key={op.id} className="p-3 flex items-center justify-between gap-3 hover:bg-amber-50">
-            <div className="flex-1">
-              <div className="font-bold text-sm">{op.nombre}</div>
-              <div className="text-[10px] text-stone-500">
-                {op.activo === false ? <span className="text-red-700">INACTIVO</span> : "Activo"}
+          <div key={op.id} className="p-3 hover:bg-amber-50">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex-1">
+                <div className="font-bold text-sm">{op.nombre}</div>
+                <div className="text-[10px] text-stone-500 flex items-center gap-2">
+                  {op.activo === false ? <span className="text-red-700 font-bold">INACTIVO</span> : <span>Activo</span>}
+                  <span>·</span>
+                  {op.pin ? <span className="text-emerald-700 font-bold">🔑 PIN asignado</span> : <span className="text-stone-400">Sin PIN</span>}
+                </div>
               </div>
+              <button onClick={() => { setEditandoPin(editandoPin === op.id ? null : op.id); setPinEdit(""); }}
+                      className="text-[10px] font-bold bg-stone-200 text-stone-900 px-2 py-1 border border-stone-900 hover:bg-stone-300">
+                🔑 PIN
+              </button>
+              <button onClick={() => handleToggle(op)}
+                      className="text-[10px] font-bold bg-amber-500 text-stone-900 px-2 py-1 border border-stone-900 hover:bg-amber-400">
+                {op.activo === false ? "✓ ACTIVAR" : "⏸"}
+              </button>
+              <button onClick={() => handleDelete(op)}
+                      className="text-[10px] font-bold bg-red-600 text-white px-2 py-1 border border-stone-900 hover:bg-red-700">
+                🗑
+              </button>
             </div>
-            <button onClick={() => handleToggle(op)}
-                    className="text-[10px] font-bold bg-amber-500 text-stone-900 px-2 py-1 border border-stone-900 hover:bg-amber-400">
-              {op.activo === false ? "✓ ACTIVAR" : "⏸ DESACTIVAR"}
-            </button>
-            <button onClick={() => handleDelete(op)}
-                    className="text-[10px] font-bold bg-red-600 text-white px-2 py-1 border border-stone-900 hover:bg-red-700">
-              🗑
-            </button>
+            {editandoPin === op.id && (
+              <div className="mt-2 flex gap-2 items-center">
+                <input type="password" value={pinEdit} onChange={(e) => setPinEdit(e.target.value.replace(/\D/g,""))}
+                       placeholder="Nuevo PIN (4-8 dígitos) — vacío para quitar"
+                       maxLength={8}
+                       className="flex-1 border-2 border-stone-900 p-2 text-sm focus:bg-amber-50 focus:outline-none font-mono" />
+                <button onClick={() => handleGuardarPin(op)}
+                        className="px-3 py-2 text-xs font-black tracking-widest border-2 border-stone-900 bg-stone-900 text-amber-400 hover:bg-amber-400 hover:text-stone-900"
+                        style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+                  ✓ GUARDAR
+                </button>
+                <button onClick={() => { setEditandoPin(null); setPinEdit(""); }}
+                        className="px-3 py-2 text-xs font-bold border-2 border-stone-900 bg-white hover:bg-stone-100">
+                  ✕
+                </button>
+              </div>
+            )}
           </div>
         ))}
       </div>
