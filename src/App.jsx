@@ -2132,7 +2132,8 @@ function CatalogoApp({ usuario, onLogout }) {
           unidad: l.esMetrosSueltos ? "m" : l.producto.unidad,
           precioUnit: l.neto, importe: l.subtotal,
           mPorUnidad: l.mPorUnidad,
-          metros: l.metros
+          metros: l.metros,
+          esMetrosSueltos: l.esMetrosSueltos
         })),
         lineasAram: lineasCarrito.filter(l => l.prov === "aram").map(l => ({
           ref: l.proveedor.ref,
@@ -2141,7 +2142,8 @@ function CatalogoApp({ usuario, onLogout }) {
           unidad: l.esMetrosSueltos ? "m" : l.producto.unidad,
           precioUnit: l.neto, importe: l.subtotal,
           mPorUnidad: l.mPorUnidad,
-          metros: l.metros
+          metros: l.metros,
+          esMetrosSueltos: l.esMetrosSueltos
         })),
         lineasNoListado: lineasNoListadas,
         notas: notasPedido,
@@ -2261,7 +2263,7 @@ function CatalogoApp({ usuario, onLogout }) {
         doc.setFont("helvetica", "normal");
         lineas.forEach(l => {
           if (y > 270) { doc.addPage(); y = 20; }
-          const sufijo = l.esMetrosSueltos ? " (m sueltos)" : (l.metros ? ` (${l.cantidad} ${l.producto?.unidad||""}·${l.metros}m)` : "");
+          const sufijo = (!l.esMetrosSueltos && l.metros) ? ` — ${l.cantidad} ${l.unidad} (${l.metros}m)` : "";
           const descFull = l.desc + sufijo;
           const desc = descFull.length > 55 ? descFull.substring(0, 53) + ".." : descFull;
           doc.text(String(l.cantidad), 17, y); doc.text(String(l.ref || "—"), 32, y);
@@ -2404,7 +2406,7 @@ function CatalogoApp({ usuario, onLogout }) {
 
       lineasCatalogo.forEach(l => {
         if (y > 270) { doc.addPage(); y = 20; }
-        const sufijo2 = l.esMetrosSueltos ? " (m sueltos)" : (l.metros ? ` (${l.cantidad} ${l.producto?.unidad||""}·${l.metros}m)` : "");
+        const sufijo2 = (!l.esMetrosSueltos && l.metros) ? ` — ${l.cantidad} ${l.unidad} (${l.metros}m)` : "";
         const descFull2 = l.desc + sufijo2;
         const desc = descFull2.length > 55 ? descFull2.substring(0, 53) + ".." : descFull2;
         doc.text(String(l.cantidad), 17, y);
