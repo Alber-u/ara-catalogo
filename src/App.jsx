@@ -1884,13 +1884,9 @@ function CardProducto({ producto, cantidades, addProv, removeProv, setExacta, on
                   <div className="font-black text-lg text-stone-900 leading-none mt-1" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
                     €{neto.toFixed(2)}
                   </div>
-                  {producto.cantidadPorUnidad && (producto.unidad === "rollo" || producto.unidad === "barra") ? (
-                    <>
-                      <div className="font-mono text-[9px] text-stone-500 mb-0.5">€/m · {producto.cantidadPorUnidad}m/{producto.unidad}</div>
-                      <div className="text-[9px] text-amber-700 font-bold mb-1">1 {producto.unidad} = €{(neto * producto.cantidadPorUnidad).toFixed(2)}</div>
-                    </>
-                  ) : (
-                    <div className="font-mono text-[9px] text-stone-500 mb-1">/{producto.unidad}</div>
+                  <div className="font-mono text-[9px] text-stone-500 mb-1">/{producto.unidad}</div>
+                  {producto.cantidadPorUnidad && (
+                    <div className="text-[9px] text-stone-400 mb-1">1 {producto.unidad} = {producto.cantidadPorUnidad}m</div>
                   )}
                   <div className="flex items-center justify-between">
                     {cant === 0 ? (
@@ -1985,13 +1981,9 @@ function CatalogoApp({ usuario, onLogout }) {
       if (!p || !p.proveedores[prov]) return null;
       const proveedor = p.proveedores[prov];
       const neto = precioNeto(proveedor);
-      // Para rollos/barras: precio es €/m, cantidad = nº de rollos/barras
-      // importe = precio/m × metros_por_unidad × cantidad_unidades
-      const mPorUnidad = (p.cantidadPorUnidad && (p.unidad === "rollo" || p.unidad === "barra")) ? p.cantidadPorUnidad : 1;
-      const subtotal = +(neto * mPorUnidad * cant).toFixed(2);
       return {
-        id, prov, producto: p, proveedor, cantidad: cant, neto, mPorUnidad,
-        subtotal
+        id, prov, producto: p, proveedor, cantidad: cant, neto,
+        subtotal: +(neto * cant).toFixed(2)
       };
     }).filter(Boolean);
   }, [carrito]);
@@ -2074,13 +2066,11 @@ function CatalogoApp({ usuario, onLogout }) {
         obra: usuario.obra,
         lineasAqua: lineasCarrito.filter(l => l.prov === "aqua").map(l => ({
           ref: l.proveedor.ref, desc: l.producto.desc, cantidad: l.cantidad,
-          unidad: l.producto.unidad, precioUnit: l.neto, importe: l.subtotal,
-          mPorUnidad: l.mPorUnidad, metros: l.mPorUnidad > 1 ? +(l.cantidad * l.mPorUnidad).toFixed(1) : null
+          unidad: l.producto.unidad, precioUnit: l.neto, importe: l.subtotal
         })),
         lineasAram: lineasCarrito.filter(l => l.prov === "aram").map(l => ({
           ref: l.proveedor.ref, desc: l.producto.desc, cantidad: l.cantidad,
-          unidad: l.producto.unidad, precioUnit: l.neto, importe: l.subtotal,
-          mPorUnidad: l.mPorUnidad, metros: l.mPorUnidad > 1 ? +(l.cantidad * l.mPorUnidad).toFixed(1) : null
+          unidad: l.producto.unidad, precioUnit: l.neto, importe: l.subtotal
         })),
         lineasNoListado: lineasNoListadas,
         notas: notasPedido,
@@ -2105,12 +2095,12 @@ function CatalogoApp({ usuario, onLogout }) {
       txt += `Obra: ${d.obra.nombre}\nFecha: ${fecha}\nSolicita: ${d.operario}\nID: ${d.pedidoId}\n\n`;
       if ((d.lineasAqua || []).length > 0) {
         txt += `*── AQUATUBO SL (60 días) ──*\n`;
-        d.lineasAqua.forEach(l => { const mu = l.metros ? ` (${l.metros}m)` : ""; txt += `• ${l.cantidad} ${l.unidad}${mu} · ${l.desc} (ref ${l.ref}) — €${l.importe.toFixed(2)}\n`; });
+        d.lineasAqua.forEach(l => { txt += `• ${l.cantidad} ${l.unidad} · ${l.desc} (ref ${l.ref}) — €${l.importe.toFixed(2)}\n`; });
         txt += `Subtotal: €${d.totalAqua.toFixed(2)} + IVA\n\n`;
       }
       if ((d.lineasAram || []).length > 0) {
         txt += `*── ARAMBURU GUZMÁN SLU (Contado) ──*\n`;
-        d.lineasAram.forEach(l => { const mu = l.metros ? ` (${l.metros}m)` : ""; txt += `• ${l.cantidad} ${l.unidad}${mu} · ${l.desc} (ref ${l.ref}) — €${l.importe.toFixed(2)}\n`; });
+        d.lineasAram.forEach(l => { txt += `• ${l.cantidad} ${l.unidad} · ${l.desc} (ref ${l.ref}) — €${l.importe.toFixed(2)}\n`; });
         txt += `Subtotal: €${d.totalAram.toFixed(2)} + IVA\n\n`;
       }
       const todosNoList = d.lineasNoListado || [];
@@ -2143,7 +2133,7 @@ function CatalogoApp({ usuario, onLogout }) {
     txt += `Obra: ${d.obra.nombre}\nFecha: ${fecha}\nSolicita: ${d.operario}\n\n`;
     if (lineas.length > 0) {
       txt += `*LÍNEAS:*\n`;
-      lineas.forEach(l => { const mu = l.metros ? ` (${l.metros}m)` : ""; txt += `• ${l.cantidad} ${l.unidad}${mu} · ${l.desc} (ref ${l.ref}) — €${l.importe.toFixed(2)}\n`; });
+      lineas.forEach(l => { txt += `• ${l.cantidad} ${l.unidad} · ${l.desc} (ref ${l.ref}) — €${l.importe.toFixed(2)}\n`; });
     }
     if (noList.length > 0) {
       txt += `\n*PRODUCTOS NO LISTADOS (confirmar precio):*\n`;
@@ -2201,11 +2191,9 @@ function CatalogoApp({ usuario, onLogout }) {
         lineas.forEach(l => {
           if (y > 270) { doc.addPage(); y = 20; }
           const desc = l.desc.length > 50 ? l.desc.substring(0, 48) + ".." : l.desc;
-          const cantStr = l.metros ? `${l.cantidad}u(${l.metros}m)` : String(l.cantidad);
-          doc.text(cantStr, 17, y); doc.text(String(l.ref || "—"), 32, y);
+          doc.text(String(l.cantidad), 17, y); doc.text(String(l.ref || "—"), 32, y);
           doc.text(desc, 60, y);
-          const pLabel = l.mPorUnidad > 1 ? `€${l.precioUnit.toFixed(3)}/m` : `€${l.precioUnit.toFixed(2)}`;
-          doc.text(pLabel, 152, y, { align: "right" });
+          doc.text("€" + l.precioUnit.toFixed(2), 152, y, { align: "right" });
           doc.text("€" + l.importe.toFixed(2), 192, y, { align: "right" }); y += 4;
         });
         y += 2; doc.line(120, y, 195, y); y += 4;
@@ -2344,8 +2332,7 @@ function CatalogoApp({ usuario, onLogout }) {
       lineasCatalogo.forEach(l => {
         if (y > 270) { doc.addPage(); y = 20; }
         const desc = l.desc.length > 50 ? l.desc.substring(0, 48) + ".." : l.desc;
-        const cantStr2 = l.metros ? `${l.cantidad}u(${l.metros}m)` : String(l.cantidad);
-        doc.text(cantStr2, 17, y);
+        doc.text(String(l.cantidad), 17, y);
         doc.text(String(l.ref || "—"), 32, y);
         doc.text(desc, 60, y);
         doc.text("€" + l.precioUnit.toFixed(2), 152, y, { align: "right" });
@@ -2774,9 +2761,7 @@ function CatalogoApp({ usuario, onLogout }) {
                                 </div>
                                 <div className="text-right">
                                   <div className="font-black text-sm" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>€{l.subtotal.toFixed(2)}</div>
-                                  <div className="text-[9px] text-stone-500 font-mono">
-                                    €{l.neto.toFixed(2)}/m{l.mPorUnidad > 1 ? ` · ${l.cantidad} ${l.producto.unidad} = ${l.cantidad * l.mPorUnidad}m` : ""}
-                                  </div>
+                                  <div className="text-[9px] text-stone-500 font-mono">€{l.neto.toFixed(2)}/{l.producto.unidad}</div>
                                 </div>
                               </div>
                             </div>
@@ -2827,9 +2812,7 @@ function CatalogoApp({ usuario, onLogout }) {
                                 </div>
                                 <div className="text-right">
                                   <div className="font-black text-sm" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>€{l.subtotal.toFixed(2)}</div>
-                                  <div className="text-[9px] text-stone-500 font-mono">
-                                    €{l.neto.toFixed(2)}/m{l.mPorUnidad > 1 ? ` · ${l.cantidad} ${l.producto.unidad} = ${l.cantidad * l.mPorUnidad}m` : ""}
-                                  </div>
+                                  <div className="text-[9px] text-stone-500 font-mono">€{l.neto.toFixed(2)}/{l.producto.unidad}</div>
                                 </div>
                               </div>
                             </div>
@@ -4382,7 +4365,10 @@ function ModalEditarProducto({ producto, api, reload, onCerrar, plantillaInicial
                 </div>
                 {neto !== null && (
                   <div className={`mt-2 text-xs font-bold ${COLOR_TEXT[col]||"text-blue-900"}`}>
-                    Precio neto = €{neto}/{unidad}
+                    {cantPorUnidad && (unidad === "rollo" || unidad === "barra")
+                      ? `€${neto}/m · 1 ${unidad} = €${(neto * parseFloat(cantPorUnidad)).toFixed(2)}`
+                      : `Precio neto = €${neto}/${unidad}`
+                    }
                   </div>
                 )}
               </div>
