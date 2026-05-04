@@ -2075,19 +2075,25 @@ function CatalogoApp({ usuario, onLogout }) {
       // Adaptar líneas al formato que espera el backend
       const linAqua = lineasCarrito.filter(l => l.prov === "aqua").map(l => ({
         ref: l.proveedor.ref,
-        desc: l.producto.desc,
+        desc: l.esMetrosSueltos ? `${l.producto.desc} (metros sueltos)` : l.producto.desc,
         cantidad: l.cantidad,
-        unidad: l.producto.unidad,
+        unidad: l.esMetrosSueltos ? "m" : l.producto.unidad,
         precioUnit: l.neto,
-        importe: l.subtotal
+        importe: l.subtotal,
+        mPorUnidad: l.mPorUnidad,
+        metros: l.metros,
+        esMetrosSueltos: !!l.esMetrosSueltos
       }));
       const linAram = lineasCarrito.filter(l => l.prov === "aram").map(l => ({
         ref: l.proveedor.ref,
-        desc: l.producto.desc,
+        desc: l.esMetrosSueltos ? `${l.producto.desc} (metros sueltos)` : l.producto.desc,
         cantidad: l.cantidad,
-        unidad: l.producto.unidad,
+        unidad: l.esMetrosSueltos ? "m" : l.producto.unidad,
         precioUnit: l.neto,
-        importe: l.subtotal
+        importe: l.subtotal,
+        mPorUnidad: l.mPorUnidad,
+        metros: l.metros,
+        esMetrosSueltos: !!l.esMetrosSueltos
       }));
 
       const r = await fetch(BACKEND_URL + "/enviar-pedido", {
