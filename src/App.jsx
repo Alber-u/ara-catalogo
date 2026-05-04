@@ -2127,21 +2127,25 @@ function CatalogoApp({ usuario, onLogout }) {
         obra: usuario.obra,
         lineasAqua: lineasCarrito.filter(l => l.prov === "aqua").map(l => ({
           ref: l.proveedor.ref,
-          desc: l.esMetrosSueltos ? `${l.producto.desc} (metros sueltos)` : l.producto.desc,
+          desc: l.producto.desc,
           cantidad: l.cantidad,
-          unidad: l.esMetrosSueltos ? "m" : l.producto.unidad,
+          unidad: l.esMetrosSueltos ? "m sueltos" : l.producto.unidad,
           precioUnit: l.neto, importe: l.subtotal,
           mPorUnidad: l.mPorUnidad,
-          metros: l.metros
+          metros: l.metros,
+          esMetrosSueltos: l.esMetrosSueltos,
+          producto: l.producto
         })),
         lineasAram: lineasCarrito.filter(l => l.prov === "aram").map(l => ({
           ref: l.proveedor.ref,
-          desc: l.esMetrosSueltos ? `${l.producto.desc} (metros sueltos)` : l.producto.desc,
+          desc: l.producto.desc,
           cantidad: l.cantidad,
-          unidad: l.esMetrosSueltos ? "m" : l.producto.unidad,
+          unidad: l.esMetrosSueltos ? "m sueltos" : l.producto.unidad,
           precioUnit: l.neto, importe: l.subtotal,
           mPorUnidad: l.mPorUnidad,
-          metros: l.metros
+          metros: l.metros,
+          esMetrosSueltos: l.esMetrosSueltos,
+          producto: l.producto
         })),
         lineasNoListado: lineasNoListadas,
         notas: notasPedido,
@@ -2262,7 +2266,7 @@ function CatalogoApp({ usuario, onLogout }) {
         lineas.forEach(l => {
           if (y > 270) { doc.addPage(); y = 20; }
           const desc = l.desc.length > 50 ? l.desc.substring(0, 48) + ".." : l.desc;
-          const cantStr = l.metros ? `${l.cantidad}u(${l.metros}m)` : String(l.cantidad);
+          const cantStr = l.esMetrosSueltos ? `${l.cantidad}m` : (l.metros ? `${l.cantidad} ${l.producto?.unidad||""}(${l.metros}m)` : String(l.cantidad));
           doc.text(cantStr, 17, y); doc.text(String(l.ref || "—"), 32, y);
           doc.text(desc, 60, y);
           doc.text("€" + l.precioUnit.toFixed(2), 152, y, { align: "right" });
@@ -2404,7 +2408,7 @@ function CatalogoApp({ usuario, onLogout }) {
       lineasCatalogo.forEach(l => {
         if (y > 270) { doc.addPage(); y = 20; }
         const desc = l.desc.length > 50 ? l.desc.substring(0, 48) + ".." : l.desc;
-        const cantStr2 = l.metros ? `${l.cantidad}u(${l.metros}m)` : String(l.cantidad);
+        const cantStr2 = l.esMetrosSueltos ? `${l.cantidad}m` : (l.metros ? `${l.cantidad} ${l.producto?.unidad||""}(${l.metros}m)` : String(l.cantidad));
         doc.text(cantStr2, 17, y);
         doc.text(String(l.ref || "—"), 32, y);
         doc.text(desc, 60, y);
