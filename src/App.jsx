@@ -3693,10 +3693,10 @@ function PestañaProductos({ data, api, reload }) {
 
       {/* Modales */}
       {editando && (
-        <ModalEditarProducto producto={editando} api={api} reload={reload} onCerrar={() => setEditando(null)} />
+        <ModalEditarProducto producto={editando} api={api} reload={reload} onCerrar={() => setEditando(null)} proveedores={data.proveedores || PROVEEDORES_SEED} />
       )}
       {añadiendo && (
-        <ModalEditarProducto producto={null} api={api} reload={reload} onCerrar={() => setAñadiendo(false)} />
+        <ModalEditarProducto producto={null} api={api} reload={reload} onCerrar={() => setAñadiendo(false)} proveedores={data.proveedores || PROVEEDORES_SEED} />
       )}
       {validando && (
         <ModalEditarProducto
@@ -3711,6 +3711,8 @@ function PestañaProductos({ data, api, reload }) {
             img: "tapon"
           }}
           esValidacion={validando}
+        
+          proveedores={data.proveedores || PROVEEDORES_SEED}
         />
       )}
       {modalImportar && (
@@ -4214,7 +4216,8 @@ function ModalImportarProductos({ productosActuales, api, reload, onCerrar }) {
 }
 
 // Modal para crear/editar/validar producto
-function ModalEditarProducto({ producto, api, reload, onCerrar, plantillaInicial, esValidacion }) {
+function ModalEditarProducto({ producto, api, reload, onCerrar, plantillaInicial, esValidacion, proveedores: proveedoresProp }) {
+  const proveedoresList = proveedoresProp || PROVEEDORES_SEED;
   const inicial = producto || plantillaInicial || { desc: "", familia: "Varios", unidad: "uni", img: "tapon" };
   const [desc, setDesc] = useState(inicial.desc || "");
   const [familia, setFamilia] = useState(inicial.familia || "Varios");
@@ -4226,7 +4229,7 @@ function ModalEditarProducto({ producto, api, reload, onCerrar, plantillaInicial
   // Estado dinámico por proveedor: { provId: { ref, bruto, dto, marca } }
   const [provData, setProvData] = useState(() => {
     const d = {};
-    PROVEEDORES.forEach(prov => {
+    (proveedoresProp || PROVEEDORES_SEED).forEach(prov => {
       const p = inicial.proveedores?.[prov.id];
       d[prov.id] = { ref: p?.ref || "", bruto: p?.bruto || "", dto: p?.dto || "", marca: p?.marca || "—" };
     });
@@ -4331,7 +4334,7 @@ function ModalEditarProducto({ producto, api, reload, onCerrar, plantillaInicial
           )}
 
           {/* Sección dinámica por proveedor */}
-          {PROVEEDORES.map(prov => {
+          {proveedoresList.map(prov => {
             const d = provData[prov.id] || {};
             const col = getProvColor(prov.id);
             const neto = d.bruto ? +(parseFloat(d.bruto) * (1 - (parseFloat(d.dto) || 0) / 100)).toFixed(4) : null;
