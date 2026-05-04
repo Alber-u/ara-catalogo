@@ -1846,21 +1846,12 @@ function PantallaLogin({ onLogin, onAdminClick }) {
 // =========================================================
 //  CARD DE PRODUCTO — comparativa dinámica de proveedores
 // =========================================================
-function CardProducto({ producto, cantidades, metrosSueltos, addProv, removeProv, setExacta, setMetrosSueltos, onClick }) {
+function CardProducto({ producto, cantidades, cantidadesM, addProv, removeProv, setExacta, setExactaM, onClick }) {
   const ganador = proveedorMasBarato(producto);
   const provIds = Object.keys(producto.proveedores || {}).filter(k => producto.proveedores[k]);
   const tieneVarios = provIds.length > 1;
   const cols = Math.max(provIds.length, 1);
-
-  // Para rollo/barra: modo de pedido (por unidad o por metros)
-  const esRolloBarra = producto.cantidadPorUnidad && (producto.unidad === "rollo" || producto.unidad === "barra");
-  const [modoPedido, setModoPedido] = useState("unidad"); // "unidad" | "metros"
-  const [metrosInput, setMetrosInput] = useState({});
-
-  const rollosDesdeMetros = (m) => {
-    if (!producto.cantidadPorUnidad || !m) return 0;
-    return Math.ceil(m / producto.cantidadPorUnidad);
-  };
+  const esRolloBarra = !!(producto.cantidadPorUnidad && (producto.unidad === "rollo" || producto.unidad === "barra"));
 
   return (
     <div className="bg-white border-2 border-stone-900 hover:shadow-[6px_6px_0_0_rgba(0,0,0,1)] transition-all">
@@ -1874,22 +1865,6 @@ function CardProducto({ producto, cantidades, metrosSueltos, addProv, removeProv
         </div>
       </button>
 
-      {/* Selector de modo para rollo/barra */}
-      {esRolloBarra && (
-        <div className="flex border-t-2 border-b-2 border-stone-900" onClick={(e) => e.stopPropagation()}>
-          <button
-            onClick={(e) => { e.stopPropagation(); setModoPedido("unidad"); }}
-            className={`flex-1 py-1.5 text-[10px] font-black tracking-widest transition-all ${modoPedido === "unidad" ? "bg-stone-900 text-amber-400" : "bg-white text-stone-600 hover:bg-stone-100"}`}>
-            POR {producto.unidad.toUpperCase()}S
-          </button>
-          <button
-            onClick={(e) => { e.stopPropagation(); setModoPedido("metros"); }}
-            className={`flex-1 py-1.5 text-[10px] font-black tracking-widest border-l-2 border-stone-900 transition-all ${modoPedido === "metros" ? "bg-stone-900 text-amber-400" : "bg-white text-stone-600 hover:bg-stone-100"}`}>
-            POR METROS
-          </button>
-        </div>
-      )}
-
       <div className="grid border-t-2 border-stone-900" style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}>
         {provIds.length === 0 ? (
           <div className="p-3 text-stone-400 text-[10px] italic">Sin precio</div>
@@ -1897,13 +1872,12 @@ function CardProducto({ producto, cantidades, metrosSueltos, addProv, removeProv
           const provData = producto.proveedores[provId];
           const neto = precioNeto(provData);
           const cant = cantidades[provId] || 0;
+          const cantM = cantidadesM[provId] || 0;
           const col = getProvColor(provId);
           const esGanador = ganador === provId && tieneVarios;
-          const metros = metrosInput[provId] || "";
-          const rollosCalculados = rollosDesdeMetros(parseFloat(metros));
 
           return (
-            <div key={provId} className={`p-3 ${idx < provIds.length - 1 ? "border-r-2 border-stone-900" : ""} ${esGanador ? (COLOR_BG[col]||"bg-blue-50") : "bg-stone-50"}`}>
+            <div key={provId} className={`p-2 ${idx < provIds.length - 1 ? "border-r-2 border-stone-900" : ""} ${esGanador ? (COLOR_BG[col]||"bg-blue-50") : "bg-stone-50"}`}>
               <div className="flex items-center justify-between mb-1">
                 <TagProveedor tipo={provId} size="sm" />
                 {esGanador && <Trophy className={`w-3.5 h-3.5 ${COLOR_TROPHY[col]||"text-blue-700"}`} strokeWidth={2.5} />}
@@ -1914,85 +1888,57 @@ function CardProducto({ producto, cantidades, metrosSueltos, addProv, removeProv
                     €{neto.toFixed(2)}
                   </div>
                   {esRolloBarra ? (
-                    <div className="font-mono text-[9px] text-stone-500 mb-1">
-                      €/m · 1 {producto.unidad} = €{(neto * producto.cantidadPorUnidad).toFixed(2)}
-                    </div>
+                    <div className="font-mono text-[9px] text-stone-500 mb-1">€/m · 1 {producto.unidad} = €{(neto * producto.cantidadPorUnidad).toFixed(2)}</div>
                   ) : (
                     <div className="font-mono text-[9px] text-stone-500 mb-1">/{producto.unidad}</div>
                   )}
 
-                  {/* Control de cantidad */}
-                  {esRolloBarra && modoPedido === "metros" ? (
-                    // Modo metros
-                    <div onClick={(e) => e.stopPropagation()} className="space-y-1">
-                      <div className="flex items-center gap-1">
-                        <input
-                          type="number" min="0" placeholder="m"
-                          value={metros}
-                          onChange={(e) => setMetrosInput(prev => ({...prev, [provId]: e.target.value}))}
-                          className="w-full border-2 border-stone-900 p-1.5 text-xs font-mono text-center focus:outline-none focus:bg-amber-50"
-                        />
-                        <span className="text-[10px] font-bold text-stone-600 whitespace-nowrap">m</span>
-                      </div>
-                      {metros && rollosCalculados > 0 && (
-                        <div className="text-[9px] text-stone-600">
-                          = {rollosCalculados} {producto.unidad}{rollosCalculados > 1 ? "s" : ""} ({rollosCalculados * producto.cantidadPorUnidad}m)
+                  {/* LÍNEA 1: por rollos/barras o unidades normales */}
+                  <div className="space-y-1">
+                    {esRolloBarra && (
+                      <div className="text-[9px] font-bold text-stone-600 tracking-widest">{producto.unidad.toUpperCase()}S</div>
+                    )}
+                    {cant === 0 ? (
+                      <button onClick={(e) => { e.stopPropagation(); addProv(provId); }}
+                              className="w-full bg-stone-900 text-white text-[10px] py-1.5 font-bold tracking-wider hover:opacity-80">
+                        + AÑADIR
+                      </button>
+                    ) : (
+                      <div className={`flex flex-col gap-0.5`}>
+                        <div className={`flex items-center w-full justify-between ${COLOR_ACTIVE[col]||"bg-blue-700"} text-white px-1 py-1 gap-1`}>
+                          <button onClick={(e) => { e.stopPropagation(); removeProv(provId); }} className="p-0.5"><Minus className="w-3 h-3" /></button>
+                          <input type="number" min="0" value={cant}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => { const v = parseInt(e.target.value); if (!isNaN(v)) setExacta(provId, v); }}
+                            className="w-10 text-center font-mono text-xs font-bold bg-stone-800 text-white border border-stone-500 focus:outline-none rounded-none" />
+                          <button onClick={(e) => { e.stopPropagation(); addProv(provId); }} className="p-0.5"><Plus className="w-3 h-3" /></button>
                         </div>
-                      )}
-                      {metros && rollosCalculados > 0 && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setExacta(provId, cant + rollosCalculados); setMetrosInput(prev => ({...prev, [provId]: ""})); }}
-                          className={`w-full ${COLOR_ACTIVE[col]||"bg-blue-700"} text-white text-[10px] py-1.5 font-bold tracking-wider`}>
-                          + AÑADIR {rollosCalculados} {producto.unidad}{rollosCalculados > 1 ? "s" : ""}
-                        </button>
-                      )}
-                      {/* Metros sueltos */}
-                      <div className="flex items-center gap-1 mt-1">
-                        <input
-                          type="number" min="0" placeholder="m sueltos"
-                          value={metrosSueltos[provId] || ""}
-                          onClick={(e) => e.stopPropagation()}
-                          onChange={(e) => { const v = parseFloat(e.target.value); setMetrosSueltos(provId, isNaN(v) ? 0 : v); }}
-                          className="flex-1 border-2 border-stone-900 p-1 text-xs font-mono text-center focus:outline-none focus:bg-amber-50"
-                        />
-                        <span className="text-[10px] font-bold text-stone-500">m sueltos</span>
+                        {esRolloBarra && <div className="text-[9px] text-center text-stone-500">{cant * producto.cantidadPorUnidad}m</div>}
                       </div>
-                      {(cant > 0 || (metrosSueltos[provId] || 0) > 0) && (
-                        <div className="text-[9px] text-center font-bold text-stone-700 mt-0.5">
-                          {cant > 0 && <span>{cant} {producto.unidad}{cant > 1 ? "s" : ""} ({cant * producto.cantidadPorUnidad}m)</span>}
-                          {cant > 0 && (metrosSueltos[provId] || 0) > 0 && <span> + </span>}
-                          {(metrosSueltos[provId] || 0) > 0 && <span>{metrosSueltos[provId]}m sueltos</span>}
-                          <button onClick={(e) => { e.stopPropagation(); setExacta(provId, 0); setMetrosSueltos(provId, 0); }} className="ml-2 text-red-600">✕</button>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    // Modo unidad (rollos/barras o productos normales)
-                    <div className="flex items-center justify-between">
-                      {cant === 0 ? (
-                        <button onClick={(e) => { e.stopPropagation(); addProv(provId); }}
-                                className="w-full bg-stone-900 text-white text-[10px] py-1.5 font-bold tracking-wider hover:opacity-80 transition-opacity">
-                          + AÑADIR
-                        </button>
-                      ) : (
-                        <div className={`flex flex-col w-full gap-0.5`}>
+                    )}
+
+                    {/* LÍNEA 2: metros sueltos (solo para rollo/barra) */}
+                    {esRolloBarra && (
+                      <>
+                        <div className="text-[9px] font-bold text-stone-600 tracking-widest mt-1">METROS SUELTOS</div>
+                        {cantM === 0 ? (
+                          <button onClick={(e) => { e.stopPropagation(); setExactaM(provId, 1); }}
+                                  className="w-full bg-stone-200 text-stone-900 text-[10px] py-1 font-bold tracking-wider hover:bg-stone-300 border border-stone-400">
+                            + AÑADIR METROS
+                          </button>
+                        ) : (
                           <div className={`flex items-center w-full justify-between ${COLOR_ACTIVE[col]||"bg-blue-700"} text-white px-1 py-1 gap-1`}>
-                            <button onClick={(e) => { e.stopPropagation(); removeProv(provId); }} className="p-0.5"><Minus className="w-3 h-3" /></button>
-                            <input
-                              type="number" min="0" value={cant}
+                            <button onClick={(e) => { e.stopPropagation(); setExactaM(provId, Math.max(0, cantM - 1)); }} className="p-0.5"><Minus className="w-3 h-3" /></button>
+                            <input type="number" min="0" value={cantM}
                               onClick={(e) => e.stopPropagation()}
-                              onChange={(e) => { const v = parseInt(e.target.value); if (!isNaN(v)) setExacta(provId, v); }}
-                              className="w-10 text-center font-mono text-xs font-bold bg-stone-800 text-white border border-stone-500 focus:outline-none rounded-none"
-                            />
-                            <button onClick={(e) => { e.stopPropagation(); addProv(provId); }} className="p-0.5"><Plus className="w-3 h-3" /></button>
+                              onChange={(e) => { const v = parseFloat(e.target.value); if (!isNaN(v)) setExactaM(provId, v); }}
+                              className="w-10 text-center font-mono text-xs font-bold bg-stone-800 text-white border border-stone-500 focus:outline-none rounded-none" />
+                            <button onClick={(e) => { e.stopPropagation(); setExactaM(provId, cantM + 1); }} className="p-0.5"><Plus className="w-3 h-3" /></button>
                           </div>
-                          {esRolloBarra && (
-                            <div className="text-[9px] text-center text-stone-500">{cant * producto.cantidadPorUnidad}m en total</div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
+                        )}
+                      </>
+                    )}
+                  </div>
                 </>
               ) : (
                 <div className="font-mono text-[10px] text-stone-400 italic mt-2">No disponible</div>
@@ -2048,51 +1994,60 @@ function CatalogoApp({ usuario, onLogout }) {
     });
   }, [familia, busqueda]);
 
-  // carrito: { "id:prov": rollos, "id:prov:m": metros_sueltos }
   const getCant = (id, prov) => carrito[`${id}:${prov}`] || 0;
-  const getMetros = (id, prov) => carrito[`${id}:${prov}:m`] || 0;
   const setCant = (id, prov, fn) => setCarrito(c => {
     const k = `${id}:${prov}`;
     const nuevo = fn(c[k] || 0);
     if (nuevo <= 0) { const r = {...c}; delete r[k]; return r; }
     return { ...c, [k]: nuevo };
   });
-  const setMetrosSueltos = (id, prov, metros) => setCarrito(c => {
-    const k = `${id}:${prov}:m`;
-    if (!metros || metros <= 0) { const r = {...c}; delete r[k]; return r; }
-    return { ...c, [k]: metros };
-  });
   const addProv = (id, prov) => setCant(id, prov, n => n + 1);
   const removeProv = (id, prov) => setCant(id, prov, n => Math.max(0, n - 1));
   const setExacta = (id, prov, n) => setCant(id, prov, () => n);
 
+  // Metros sueltos — clave separada "id:prov:m"
+  const [carritoM, setCarritoM] = useState({});
+  const getCantM = (id, prov) => carritoM[`${id}:${prov}`] || 0;
+  const setExactaM = (id, prov, n) => setCarritoM(c => {
+    const k = `${id}:${prov}`;
+    if (!n || n <= 0) { const r = {...c}; delete r[k]; return r; }
+    return { ...c, [k]: n };
+  });
+
   // Cálculos del carrito
   const lineasCarrito = useMemo(() => {
     const lines = [];
+    // Rollos/barras y unidades normales
     Object.entries(carrito).forEach(([k, cant]) => {
-      const parts = k.split(":");
-      const esMetros = parts.length === 3 && parts[2] === "m";
-      const id = parts[0];
-      const prov = parts[1];
+      const [id, prov] = k.split(":");
       const p = CATALOGO.find(x => x.id === id);
       if (!p || !p.proveedores[prov]) return;
       const proveedor = p.proveedores[prov];
       const neto = precioNeto(proveedor);
       const esRolloBarra = p.cantidadPorUnidad && (p.unidad === "rollo" || p.unidad === "barra");
-
-      if (esMetros && esRolloBarra) {
-        // Línea de metros sueltos
-        const subtotal = +(neto * cant).toFixed(2);
-        lines.push({ id, prov, producto: p, proveedor, cantidad: cant, neto, mPorUnidad: 1, subtotal, esMetrosSueltos: true, keyCarrito: k });
-      } else {
-        // Línea de rollos/barras o unidades normales
-        const mPorUnidad = esRolloBarra ? p.cantidadPorUnidad : 1;
-        const subtotal = +(neto * mPorUnidad * cant).toFixed(2);
-        lines.push({ id, prov, producto: p, proveedor, cantidad: cant, neto, mPorUnidad, subtotal, esMetrosSueltos: false, keyCarrito: k });
-      }
+      const mPorUnidad = esRolloBarra ? p.cantidadPorUnidad : 1;
+      lines.push({
+        id, prov, producto: p, proveedor, cantidad: cant, neto, mPorUnidad,
+        subtotal: +(neto * mPorUnidad * cant).toFixed(2),
+        esMetrosSueltos: false,
+        metros: esRolloBarra ? +(cant * mPorUnidad).toFixed(1) : null
+      });
+    });
+    // Metros sueltos
+    Object.entries(carritoM).forEach(([k, cantM]) => {
+      const [id, prov] = k.split(":");
+      const p = CATALOGO.find(x => x.id === id);
+      if (!p || !p.proveedores[prov] || !cantM) return;
+      const proveedor = p.proveedores[prov];
+      const neto = precioNeto(proveedor);
+      lines.push({
+        id, prov, producto: p, proveedor, cantidad: cantM, neto, mPorUnidad: 1,
+        subtotal: +(neto * cantM).toFixed(2),
+        esMetrosSueltos: true, metros: null
+      });
     });
     return lines;
-  }, [carrito]);
+  }, [carrito, carritoM]);
 
   const totalAqua = lineasCarrito.filter(l => l.prov === "aqua").reduce((s, l) => s + l.subtotal, 0);
   const totalAram = lineasCarrito.filter(l => l.prov === "aram").reduce((s, l) => s + l.subtotal, 0);
@@ -2177,7 +2132,7 @@ function CatalogoApp({ usuario, onLogout }) {
           unidad: l.esMetrosSueltos ? "m" : l.producto.unidad,
           precioUnit: l.neto, importe: l.subtotal,
           mPorUnidad: l.mPorUnidad,
-          metros: !l.esMetrosSueltos && l.mPorUnidad > 1 ? +(l.cantidad * l.mPorUnidad).toFixed(1) : null
+          metros: l.metros
         })),
         lineasAram: lineasCarrito.filter(l => l.prov === "aram").map(l => ({
           ref: l.proveedor.ref,
@@ -2186,7 +2141,7 @@ function CatalogoApp({ usuario, onLogout }) {
           unidad: l.esMetrosSueltos ? "m" : l.producto.unidad,
           precioUnit: l.neto, importe: l.subtotal,
           mPorUnidad: l.mPorUnidad,
-          metros: !l.esMetrosSueltos && l.mPorUnidad > 1 ? +(l.cantidad * l.mPorUnidad).toFixed(1) : null
+          metros: l.metros
         })),
         lineasNoListado: lineasNoListadas,
         notas: notasPedido,
@@ -2778,11 +2733,11 @@ function CatalogoApp({ usuario, onLogout }) {
               key={p.id}
               producto={p}
               cantidades={Object.fromEntries(PROVEEDORES.map(pv => [pv.id, getCant(p.id, pv.id)]))}
-              metrosSueltos={Object.fromEntries(PROVEEDORES.map(pv => [pv.id, getMetros(p.id, pv.id)]))}
+              cantidadesM={Object.fromEntries(PROVEEDORES.map(pv => [pv.id, getCantM(p.id, pv.id)]))}
               addProv={(provId) => addProv(p.id, provId)}
               removeProv={(provId) => removeProv(p.id, provId)}
               setExacta={(provId, n) => setExacta(p.id, provId, n)}
-              setMetrosSueltos={(provId, m) => setMetrosSueltos(p.id, provId, m)}
+              setExactaM={(provId, n) => setExactaM(p.id, provId, n)}
               onClick={() => setProductoSel(p)}
             />
           ))}
