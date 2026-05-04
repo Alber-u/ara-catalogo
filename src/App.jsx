@@ -1593,9 +1593,15 @@ function PantallaLogin({ onLogin }) {
   const [nombre, setNombre] = useState("");
   const [obraId, setObraId] = useState("");
   const [nombrePersonalizado, setNombrePersonalizado] = useState("");
+  const [crearObraAbierto, setCrearObraAbierto] = useState(false);
+  const [nuevaObraNombre, setNuevaObraNombre] = useState("");
+  const [nuevaObraDir, setNuevaObraDir] = useState("");
+  const [creandoObra, setCreandoObra] = useState(false);
+  const [errorCreaObra, setErrorCreaObra] = useState("");
 
   const nombreEfectivo = nombre === "Otro (escribir nombre)" ? nombrePersonalizado : nombre;
   const puedeEntrar = nombreEfectivo.trim().length > 1 && obraId;
+  const puedeCrearObra = nuevaObraNombre.trim().length > 2 && !creandoObra;
 
   const handleSubmit = () => {
     if (!puedeEntrar) return;
@@ -1603,12 +1609,41 @@ function PantallaLogin({ onLogin }) {
     onLogin({ nombre: nombreEfectivo, obra });
   };
 
+  const handleCrearObra = async () => {
+    if (!puedeCrearObra) return;
+    setCreandoObra(true);
+    setErrorCreaObra("");
+    try {
+      const r = await fetch(BACKEND_URL + "/obra-nueva", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          nombre: nuevaObraNombre.trim(),
+          dir: nuevaObraDir.trim(),
+          creadaPor: nombreEfectivo || "anónimo"
+        })
+      });
+      if (!r.ok) throw new Error("Error " + r.status);
+      const obra = await r.json();
+      // Añadirla a la lista en memoria para poder seleccionarla
+      OBRAS = [...OBRAS, obra];
+      setObraId(obra.id);
+      setCrearObraAbierto(false);
+      setNuevaObraNombre("");
+      setNuevaObraDir("");
+    } catch (e) {
+      setErrorCreaObra("No se pudo crear la obra. Inténtalo de nuevo.");
+    } finally {
+      setCreandoObra(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-stone-100 flex items-center justify-center p-4 font-mono"
          style={{ backgroundImage: "repeating-linear-gradient(45deg, transparent, transparent 30px, rgba(0,0,0,0.02) 30px, rgba(0,0,0,0.02) 31px)" }}>
       <div className="w-full max-w-md">
         <div className="bg-amber-500 border-4 border-stone-900 p-6 mb-3 shadow-[8px_8px_0_0_rgba(0,0,0,1)]">
-          <div className="text-[10px] tracking-[0.3em] mb-2">ARA CORPORATE · DEMO</div>
+          <div className="text-[10px] tracking-[0.3em] mb-2">ARA CORPORATE</div>
           <h1 className="font-black text-4xl leading-none mb-1" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
             PEDIDOS DE OBRA
           </h1>
@@ -1651,6 +1686,54 @@ function PantallaLogin({ onLogin }) {
               <option value="">— Selecciona la obra —</option>
               {OBRAS.map(o => <option key={o.id} value={o.id}>{o.nombre}</option>)}
             </select>
+
+            {/* Botón "+ Nueva obra" o formulario de creación */}
+            {!crearObraAbierto ? (
+              <button
+                onClick={() => setCrearObraAbierto(true)}
+                className="mt-2 w-full text-xs font-bold text-stone-700 border-2 border-dashed border-stone-400 p-2 hover:bg-amber-50 hover:border-stone-900 transition-all"
+              >
+                + ¿NO ESTÁ TU OBRA? AÑADE UNA NUEVA
+              </button>
+            ) : (
+              <div className="mt-2 border-2 border-stone-900 bg-amber-50 p-3 space-y-2">
+                <div className="text-[10px] tracking-widest font-bold text-stone-700">NUEVA OBRA</div>
+                <input
+                  type="text"
+                  placeholder="Nombre de la obra (ej: Calle Real 5)"
+                  value={nuevaObraNombre}
+                  onChange={(e) => setNuevaObraNombre(e.target.value)}
+                  className="w-full border-2 border-stone-900 bg-white p-2 text-xs focus:outline-none font-mono"
+                />
+                <input
+                  type="text"
+                  placeholder="Dirección completa (opcional)"
+                  value={nuevaObraDir}
+                  onChange={(e) => setNuevaObraDir(e.target.value)}
+                  className="w-full border-2 border-stone-900 bg-white p-2 text-xs focus:outline-none font-mono"
+                />
+                {errorCreaObra && (
+                  <div className="text-[10px] text-red-700 font-bold">{errorCreaObra}</div>
+                )}
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => { setCrearObraAbierto(false); setNuevaObraNombre(""); setNuevaObraDir(""); setErrorCreaObra(""); }}
+                    className="flex-1 text-[10px] font-bold tracking-widest p-2 border-2 border-stone-900 bg-white hover:bg-stone-100"
+                  >
+                    CANCELAR
+                  </button>
+                  <button
+                    onClick={handleCrearObra}
+                    disabled={!puedeCrearObra}
+                    className={`flex-1 text-[10px] font-bold tracking-widest p-2 border-2 border-stone-900 ${
+                      puedeCrearObra ? "bg-stone-900 text-amber-400 hover:bg-amber-400 hover:text-stone-900" : "bg-stone-200 text-stone-400 cursor-not-allowed"
+                    }`}
+                  >
+                    {creandoObra ? "CREANDO…" : "✓ CREAR OBRA"}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           <button
@@ -1672,7 +1755,7 @@ function PantallaLogin({ onLogin }) {
         </div>
 
         <div className="text-center text-[10px] text-stone-500 mt-4 tracking-widest">
-          DEMO · ESTA APP NO ENVÍA PEDIDOS REALES
+          ARA CORPORATE · SISTEMA INTERNO DE PEDIDOS
         </div>
       </div>
     </div>
@@ -1799,6 +1882,13 @@ function CatalogoApp({ usuario, onLogout }) {
   const [carritoAbierto, setCarritoAbierto] = useState(false);
   const [productoSel, setProductoSel] = useState(null);
   const [pedidoEnviado, setPedidoEnviado] = useState(false);
+  const [datosPedidoEnviado, setDatosPedidoEnviado] = useState(null);
+  const [notasPedido, setNotasPedido] = useState("");
+  const [enviandoPedido, setEnviandoPedido] = useState(false);
+
+  // Productos no listados (pedidos manualmente por el operario)
+  const [lineasNoListadas, setLineasNoListadas] = useState([]);
+  const [modalNoListadoAbierto, setModalNoListadoAbierto] = useState(false);
 
   // Carrito: { "<id>:aqua": cantidad, "<id>:aram": cantidad }
   const [carrito, setCarrito] = useState({});
@@ -1857,29 +1947,333 @@ function CatalogoApp({ usuario, onLogout }) {
     });
   }, [lineasCarrito]);
 
+  // === FUNCIONES DE ENVÍO/GUARDADO DE PEDIDO ===
+
+  // Envía el pedido al backend (lo guarda en histórico)
+  async function registrarPedidoEnBackend() {
+    setEnviandoPedido(true);
+    try {
+      // Adaptar líneas al formato que espera el backend
+      const linAqua = lineasCarrito.filter(l => l.prov === "aqua").map(l => ({
+        ref: l.proveedor.ref,
+        desc: l.producto.desc,
+        cantidad: l.cantidad,
+        unidad: l.producto.unidad,
+        precioUnit: l.neto,
+        importe: l.subtotal
+      }));
+      const linAram = lineasCarrito.filter(l => l.prov === "aram").map(l => ({
+        ref: l.proveedor.ref,
+        desc: l.producto.desc,
+        cantidad: l.cantidad,
+        unidad: l.producto.unidad,
+        precioUnit: l.neto,
+        importe: l.subtotal
+      }));
+
+      const r = await fetch(BACKEND_URL + "/enviar-pedido", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          operario: usuario.nombre,
+          obra: usuario.obra,
+          lineasAqua: linAqua,
+          lineasAram: linAram,
+          lineasNoListado: lineasNoListadas,
+          notas: notasPedido
+        })
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const data = await r.json();
+      setDatosPedidoEnviado({
+        pedidoId: data.pedidoId,
+        fechaIso: new Date().toISOString(),
+        operario: usuario.nombre,
+        obra: usuario.obra,
+        lineasAqua: linAqua,
+        lineasAram: linAram,
+        lineasNoListado: lineasNoListadas,
+        notas: notasPedido,
+        totalAqua, totalAram, totalGeneral,
+        ivaAqua, ivaAram
+      });
+      setPedidoEnviado(true);
+    } catch (e) {
+      // Aun si el backend falla, dejamos que el operario tenga su PDF
+      console.warn("[ARA] Error guardando pedido:", e.message);
+      setDatosPedidoEnviado({
+        pedidoId: "local-" + Date.now(),
+        fechaIso: new Date().toISOString(),
+        operario: usuario.nombre,
+        obra: usuario.obra,
+        lineasAqua: lineasCarrito.filter(l => l.prov === "aqua").map(l => ({
+          ref: l.proveedor.ref, desc: l.producto.desc, cantidad: l.cantidad,
+          unidad: l.producto.unidad, precioUnit: l.neto, importe: l.subtotal
+        })),
+        lineasAram: lineasCarrito.filter(l => l.prov === "aram").map(l => ({
+          ref: l.proveedor.ref, desc: l.producto.desc, cantidad: l.cantidad,
+          unidad: l.producto.unidad, precioUnit: l.neto, importe: l.subtotal
+        })),
+        lineasNoListado: lineasNoListadas,
+        notas: notasPedido,
+        totalAqua, totalAram, totalGeneral, ivaAqua, ivaAram,
+        errorBackend: e.message
+      });
+      setPedidoEnviado(true);
+    } finally {
+      setEnviandoPedido(false);
+    }
+  }
+
+  // Genera mensaje de WhatsApp para un proveedor
+  function generarMensajeWhatsApp(prov) {
+    const d = datosPedidoEnviado;
+    if (!d) return "";
+    const isAqua = prov === "aqua";
+    const lineas = isAqua ? d.lineasAqua : d.lineasAram;
+    const subtotal = lineas.reduce((s, l) => s + (l.importe || 0), 0);
+    const iva = subtotal * 0.21;
+    const total = subtotal + iva;
+    const fecha = new Date(d.fechaIso).toLocaleDateString("es-ES");
+    const noList = (d.lineasNoListado || []).filter(l => l.proveedor === prov || l.proveedor === "indistinto");
+
+    let txt = `*PEDIDO ARA CORPORATE*\n`;
+    txt += `Obra: ${d.obra.nombre}\n`;
+    txt += `Fecha: ${fecha}\n`;
+    txt += `Solicita: ${d.operario}\n\n`;
+    txt += `*LÍNEAS:*\n`;
+    lineas.forEach(l => {
+      txt += `• ${l.cantidad} ${l.unidad} · ${l.desc} (ref ${l.ref}) — €${l.importe.toFixed(2)}\n`;
+    });
+    if (noList.length > 0) {
+      txt += `\n*PRODUCTOS NO LISTADOS (confirmar precio):*\n`;
+      noList.forEach(l => {
+        txt += `• ${l.cantidad} ${l.unidad}: ${l.desc}\n`;
+      });
+    }
+    txt += `\nBase: €${subtotal.toFixed(2)}\nIVA 21%: €${iva.toFixed(2)}\n*TOTAL: €${total.toFixed(2)}*\n`;
+    if (d.notas) txt += `\n*Notas:*\n${d.notas}\n`;
+    txt += `\n— ARA Corporate, CIF B90488222`;
+    return txt;
+  }
+
+  // Genera y descarga PDF
+  async function descargarPDF() {
+    const d = datosPedidoEnviado;
+    if (!d) return;
+    // Importación dinámica de jsPDF
+    let jsPDFmod;
+    try {
+      jsPDFmod = await import("jspdf");
+    } catch (e) {
+      alert("No se pudo cargar el generador de PDF. Recarga la página y prueba de nuevo.");
+      return;
+    }
+    const { jsPDF } = jsPDFmod;
+    const doc = new jsPDF({ unit: "mm", format: "a4" });
+    let y = 15;
+
+    // Cabecera
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.text("PEDIDO · ARA CORPORATE", 105, y, { align: "center" }); y += 6;
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    doc.text("ARA Corporate Sociedad de Inversiones, SL · CIF B90488222", 105, y, { align: "center" }); y += 4;
+    doc.text("Avd San Francisco Javier 9 P6 M9, 41018 Sevilla · Tel 640527426", 105, y, { align: "center" }); y += 8;
+
+    doc.setDrawColor(0); doc.setLineWidth(0.5);
+    doc.line(15, y, 195, y); y += 6;
+
+    // Datos pedido
+    doc.setFont("helvetica", "bold"); doc.setFontSize(10);
+    doc.text("DATOS DEL PEDIDO", 15, y); y += 5;
+    doc.setFont("helvetica", "normal"); doc.setFontSize(9);
+    doc.text(`Fecha:        ${new Date(d.fechaIso).toLocaleDateString("es-ES", { dateStyle: "long" })}`, 15, y); y += 4;
+    doc.text(`Obra:         ${d.obra.nombre}`, 15, y); y += 4;
+    doc.text(`Dirección:    ${d.obra.dir || "-"}`, 15, y); y += 4;
+    doc.text(`Solicita:     ${d.operario}`, 15, y); y += 4;
+    doc.text(`Pedido ID:    ${d.pedidoId}`, 15, y); y += 8;
+
+    // Función helper: pinta tabla de líneas
+    const pintarTabla = (titulo, lineas, total, iva) => {
+      if (lineas.length === 0) return;
+      doc.setFont("helvetica", "bold"); doc.setFontSize(11);
+      doc.text(titulo, 15, y); y += 5;
+
+      // Cabecera tabla
+      doc.setFillColor(230); doc.rect(15, y - 4, 180, 6, "F");
+      doc.setFont("helvetica", "bold"); doc.setFontSize(8);
+      doc.text("Cant", 17, y);
+      doc.text("Ref", 32, y);
+      doc.text("Descripción", 60, y);
+      doc.text("P.unit", 152, y, { align: "right" });
+      doc.text("Importe", 192, y, { align: "right" }); y += 4;
+      doc.setFont("helvetica", "normal");
+
+      lineas.forEach(l => {
+        if (y > 270) { doc.addPage(); y = 20; }
+        const desc = l.desc.length > 50 ? l.desc.substring(0, 48) + ".." : l.desc;
+        doc.text(String(l.cantidad), 17, y);
+        doc.text(String(l.ref || "—"), 32, y);
+        doc.text(desc, 60, y);
+        doc.text("€" + l.precioUnit.toFixed(2), 152, y, { align: "right" });
+        doc.text("€" + l.importe.toFixed(2), 192, y, { align: "right" });
+        y += 4;
+      });
+      y += 2;
+      doc.line(120, y, 195, y); y += 4;
+      doc.setFont("helvetica", "normal"); doc.setFontSize(8);
+      doc.text(`Subtotal: €${total.toFixed(2)}`, 192, y, { align: "right" }); y += 4;
+      doc.text(`IVA 21%:  €${iva.toFixed(2)}`, 192, y, { align: "right" }); y += 4;
+      doc.setFont("helvetica", "bold");
+      doc.text(`TOTAL:    €${(total + iva).toFixed(2)}`, 192, y, { align: "right" }); y += 8;
+    };
+
+    pintarTabla("LÍNEAS — AQUATUBO SL (60 días)", d.lineasAqua, d.totalAqua, d.ivaAqua);
+    pintarTabla("LÍNEAS — ARAMBURU GUZMÁN SLU (Contado)", d.lineasAram, d.totalAram, d.ivaAram);
+
+    // No listados
+    if (d.lineasNoListado && d.lineasNoListado.length > 0) {
+      if (y > 240) { doc.addPage(); y = 20; }
+      doc.setFont("helvetica", "bold"); doc.setFontSize(11);
+      doc.text("PRODUCTOS NO LISTADOS — CONFIRMAR PRECIO", 15, y); y += 5;
+      doc.setFont("helvetica", "normal"); doc.setFontSize(9);
+      d.lineasNoListado.forEach(l => {
+        doc.text(`· ${l.cantidad} ${l.unidad}: ${l.desc} ${l.proveedor !== "indistinto" ? `(prov: ${l.proveedor === "aqua" ? "Aquatubo" : "Aramburu"})` : ""}`, 15, y);
+        y += 4;
+      });
+      y += 4;
+    }
+
+    // Notas
+    if (d.notas) {
+      if (y > 240) { doc.addPage(); y = 20; }
+      doc.setFont("helvetica", "bold"); doc.setFontSize(11);
+      doc.text("NOTAS DEL OPERARIO", 15, y); y += 5;
+      doc.setFont("helvetica", "normal"); doc.setFontSize(9);
+      const lineasNotas = doc.splitTextToSize(d.notas, 175);
+      doc.text(lineasNotas, 15, y); y += lineasNotas.length * 4 + 4;
+    }
+
+    // Total general
+    if (y > 250) { doc.addPage(); y = 20; }
+    doc.setFillColor(255, 200, 0);
+    doc.rect(15, y, 180, 12, "F");
+    doc.setFont("helvetica", "bold"); doc.setFontSize(14);
+    doc.text(`TOTAL GENERAL: €${(d.totalGeneral * 1.21).toFixed(2)} IVA inc.`, 105, y + 8, { align: "center" });
+    y += 18;
+
+    // Pie
+    doc.setFont("helvetica", "italic"); doc.setFontSize(8);
+    doc.text("Forma de pago: 60 días · Recibo domiciliado", 15, y); y += 4;
+    doc.text("Documento generado automáticamente desde el sistema interno de pedidos ARA.", 15, y);
+
+    const fname = `Pedido_ARA_${d.obra.nombre.replace(/[^a-z0-9]/gi, "_")}_${new Date(d.fechaIso).toISOString().slice(0,10)}.pdf`;
+    doc.save(fname);
+  }
+
+  // === FUNCIONES DE PRODUCTO NO LISTADO ===
+  function añadirNoListado({ desc, cantidad, unidad, proveedor }) {
+    const item = {
+      id: "nl-" + Date.now(),
+      desc: desc.trim(),
+      cantidad: parseFloat(cantidad) || 1,
+      unidad: unidad || "uni",
+      proveedor: proveedor || "indistinto"
+    };
+    setLineasNoListadas(prev => [...prev, item]);
+    // También lo registramos en el backend para que el admin lo valide
+    fetch(BACKEND_URL + "/producto-no-listado", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...item,
+        pedidoPor: usuario.nombre,
+        obra: usuario.obra
+      })
+    }).catch(() => { /* fallo silencioso, no bloquea al operario */ });
+  }
+  function quitarNoListado(id) {
+    setLineasNoListadas(prev => prev.filter(l => l.id !== id));
+  }
+
   if (pedidoEnviado) {
+    const tieneAqua = (datosPedidoEnviado?.lineasAqua || []).length > 0;
+    const tieneAram = (datosPedidoEnviado?.lineasAram || []).length > 0;
     return (
       <div className="min-h-screen bg-stone-100 flex items-center justify-center p-4 font-mono">
-        <div className="w-full max-w-md text-center">
-          <div className="bg-emerald-500 border-4 border-stone-900 p-8 shadow-[8px_8px_0_0_rgba(0,0,0,1)]">
-            <Check className="w-16 h-16 mx-auto mb-3 text-stone-900" strokeWidth={3} />
-            <h2 className="font-black text-3xl mb-2" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>PEDIDO REGISTRADO</h2>
-            <div className="text-sm space-y-1 mt-4 bg-white border-2 border-stone-900 p-4 text-left">
+        <div className="w-full max-w-md">
+          <div className="bg-emerald-500 border-4 border-stone-900 p-6 shadow-[8px_8px_0_0_rgba(0,0,0,1)] text-center">
+            <Check className="w-14 h-14 mx-auto mb-2 text-stone-900" strokeWidth={3} />
+            <h2 className="font-black text-2xl mb-1" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>PEDIDO REGISTRADO</h2>
+            <div className="text-[10px] tracking-widest opacity-80">ID: {datosPedidoEnviado?.pedidoId || "-"}</div>
+          </div>
+
+          <div className="bg-white border-4 border-t-0 border-stone-900 p-4 shadow-[8px_8px_0_0_rgba(0,0,0,1)] space-y-3">
+            <div className="text-xs space-y-1 bg-stone-50 border-2 border-stone-900 p-3">
               <div><strong>Operario:</strong> {usuario.nombre}</div>
               <div><strong>Obra:</strong> {usuario.obra.nombre}</div>
-              <div><strong>Total productos:</strong> {itemsCarrito}</div>
-              <div><strong>Importe:</strong> €{(totalGeneral * 1.21).toFixed(2)} IVA inc.</div>
+              <div><strong>Total:</strong> €{((datosPedidoEnviado?.totalGeneral || 0) * 1.21).toFixed(2)} IVA inc.</div>
+              {datosPedidoEnviado?.lineasNoListado?.length > 0 && (
+                <div className="text-amber-700"><strong>{datosPedidoEnviado.lineasNoListado.length}</strong> producto(s) NO listado(s) — pendientes de validar precio</div>
+              )}
+            </div>
+
+            <div className="text-[11px] text-stone-600 leading-relaxed">
+              Comparte el pedido con tus proveedores:
+            </div>
+
+            {/* Botón PDF */}
+            <button onClick={descargarPDF}
+                    className="w-full bg-stone-900 text-amber-400 p-4 font-black text-sm tracking-widest border-2 border-stone-900 hover:bg-amber-400 hover:text-stone-900 transition-all flex items-center justify-center gap-2"
+                    style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+              📄 DESCARGAR PDF
+            </button>
+
+            {/* Botones WhatsApp por proveedor */}
+            {tieneAqua && (
+              <a href={`https://wa.me/?text=${encodeURIComponent(generarMensajeWhatsApp("aqua"))}`}
+                 target="_blank" rel="noopener noreferrer"
+                 className="w-full bg-emerald-700 text-white p-3 font-black text-xs tracking-widest border-2 border-stone-900 hover:bg-emerald-800 transition-all flex items-center justify-center gap-2"
+                 style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+                💬 ENVIAR PEDIDO AQUATUBO POR WHATSAPP
+              </a>
+            )}
+            {tieneAram && (
+              <a href={`https://wa.me/?text=${encodeURIComponent(generarMensajeWhatsApp("aram"))}`}
+                 target="_blank" rel="noopener noreferrer"
+                 className="w-full bg-amber-700 text-white p-3 font-black text-xs tracking-widest border-2 border-stone-900 hover:bg-amber-800 transition-all flex items-center justify-center gap-2"
+                 style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+                💬 ENVIAR PEDIDO ARAMBURU POR WHATSAPP
+              </a>
+            )}
+
+            {datosPedidoEnviado?.errorBackend && (
+              <div className="text-[10px] text-amber-700 bg-amber-50 border border-amber-700 p-2">
+                ⚠ El pedido no se guardó en el sistema central, pero puedes descargarlo en PDF y compartirlo manualmente.
+              </div>
+            )}
+
+            <div className="border-t-2 border-stone-200 pt-3 space-y-2">
+              <button onClick={() => {
+                        setCarrito({});
+                        setLineasNoListadas([]);
+                        setNotasPedido("");
+                        setPedidoEnviado(false);
+                        setDatosPedidoEnviado(null);
+                        setCarritoAbierto(false);
+                      }}
+                      className="w-full bg-stone-900 text-amber-400 p-3 font-black tracking-widest text-xs border-2 border-stone-900 hover:bg-amber-400 hover:text-stone-900 transition-all"
+                      style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+                ↻ HACER OTRO PEDIDO
+              </button>
+              <button onClick={onLogout}
+                      className="w-full bg-stone-200 text-stone-900 p-3 font-bold tracking-widest text-[10px] border-2 border-stone-900 hover:bg-stone-300 transition-all">
+                CERRAR SESIÓN
+              </button>
             </div>
           </div>
-          <button onClick={() => { setCarrito({}); setPedidoEnviado(false); setCarritoAbierto(false); }}
-                  className="mt-4 w-full bg-stone-900 text-amber-400 p-4 font-black tracking-widest border-2 border-stone-900 hover:bg-amber-400 hover:text-stone-900 transition-all"
-                  style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
-            HACER OTRO PEDIDO
-          </button>
-          <button onClick={onLogout}
-                  className="mt-2 w-full bg-stone-200 text-stone-900 p-3 font-bold tracking-widest text-xs border-2 border-stone-900 hover:bg-stone-300 transition-all">
-            CERRAR SESIÓN
-          </button>
         </div>
       </div>
     );
@@ -2025,10 +2419,16 @@ function CatalogoApp({ usuario, onLogout }) {
             </div>
 
             <div className="p-4 space-y-4">
-              {lineasCarrito.length === 0 ? (
-                <div className="text-center py-12 text-stone-500 text-sm">
-                  Aún no has añadido productos.<br />
-                  Vuelve al catálogo y añade lo que necesites.
+              {lineasCarrito.length === 0 && lineasNoListadas.length === 0 ? (
+                <div className="text-center py-12 text-stone-500 text-sm space-y-4">
+                  <div>
+                    Aún no has añadido productos.<br />
+                    Vuelve al catálogo y añade lo que necesites.
+                  </div>
+                  <button onClick={() => setModalNoListadoAbierto(true)}
+                          className="text-xs font-bold text-stone-700 border-2 border-dashed border-stone-400 px-4 py-2 hover:bg-amber-50 hover:border-stone-900 transition-all">
+                    + AÑADIR UN PRODUCTO QUE NO ESTÁ EN EL CATÁLOGO
+                  </button>
                 </div>
               ) : (
                 <>
@@ -2158,6 +2558,55 @@ function CatalogoApp({ usuario, onLogout }) {
                     </div>
                   )}
 
+                  {/* Productos no listados añadidos */}
+                  {lineasNoListadas.length > 0 && (
+                    <div className="bg-white border-2 border-stone-900">
+                      <div className="bg-stone-700 text-white px-3 py-2 flex items-center justify-between border-b-2 border-stone-900">
+                        <span className="font-black tracking-wider text-sm" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>PRODUCTOS NO LISTADOS</span>
+                        <span className="text-[9px] bg-amber-400 text-stone-900 px-2 py-0.5 font-bold">PENDIENTE PRECIO</span>
+                      </div>
+                      <div className="divide-y-2 divide-stone-200">
+                        {lineasNoListadas.map(l => (
+                          <div key={l.id} className="p-3 flex justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                              <div className="text-xs font-bold leading-tight">{l.desc}</div>
+                              <div className="text-[10px] font-mono text-stone-500 mt-0.5">
+                                {l.cantidad} {l.unidad}
+                                {l.proveedor !== "indistinto" && (
+                                  <> · prov: <strong>{l.proveedor === "aqua" ? "Aquatubo" : "Aramburu"}</strong></>
+                                )}
+                              </div>
+                            </div>
+                            <button onClick={() => quitarNoListado(l.id)}
+                                    className="text-stone-500 hover:text-red-700 p-1">
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Botón añadir producto no listado */}
+                  <button onClick={() => setModalNoListadoAbierto(true)}
+                          className="w-full text-xs font-bold text-stone-700 border-2 border-dashed border-stone-400 p-3 hover:bg-amber-50 hover:border-stone-900 transition-all">
+                    + AÑADIR PRODUCTO QUE NO ESTÁ EN EL CATÁLOGO
+                  </button>
+
+                  {/* Campo de notas */}
+                  <div>
+                    <label className="font-bold text-[10px] tracking-widest text-stone-600 mb-1 block">
+                      📝 NOTAS PARA EL PEDIDO (opcional)
+                    </label>
+                    <textarea
+                      value={notasPedido}
+                      onChange={(e) => setNotasPedido(e.target.value)}
+                      placeholder="Ej: Urgente, llevar antes del jueves · Recoger en obra, no en oficina · Entregar en planta 2..."
+                      rows={3}
+                      className="w-full border-2 border-stone-900 bg-white p-2 text-xs focus:outline-none focus:bg-amber-50 font-mono resize-none"
+                    />
+                  </div>
+
                   {/* TOTAL GENERAL */}
                   <div className="bg-stone-900 text-amber-400 p-4 border-2 border-stone-900">
                     <div className="flex justify-between items-baseline mb-1">
@@ -2169,18 +2618,28 @@ function CatalogoApp({ usuario, onLogout }) {
                     <div className="text-xs opacity-80 mt-1">
                       Base €{totalGeneral.toFixed(2)} · IVA €{(totalGeneral * 0.21).toFixed(2)}
                     </div>
+                    {lineasNoListadas.length > 0 && (
+                      <div className="text-[10px] mt-2 bg-amber-400 text-stone-900 px-2 py-1 inline-block font-bold">
+                        + {lineasNoListadas.length} producto(s) no listado(s) sin precio
+                      </div>
+                    )}
                   </div>
 
                   <button
-                    onClick={() => setPedidoEnviado(true)}
-                    className="w-full bg-amber-500 text-stone-900 border-2 border-stone-900 p-4 font-black tracking-widest hover:bg-stone-900 hover:text-amber-400 transition-all shadow-[4px_4px_0_0_rgba(0,0,0,1)] hover:shadow-none hover:translate-x-1 hover:translate-y-1"
+                    onClick={registrarPedidoEnBackend}
+                    disabled={enviandoPedido}
+                    className={`w-full border-2 border-stone-900 p-4 font-black tracking-widest transition-all ${
+                      enviandoPedido
+                        ? "bg-stone-300 text-stone-600 cursor-wait"
+                        : "bg-amber-500 text-stone-900 hover:bg-stone-900 hover:text-amber-400 shadow-[4px_4px_0_0_rgba(0,0,0,1)] hover:shadow-none hover:translate-x-1 hover:translate-y-1"
+                    }`}
                     style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}
                   >
-                    REGISTRAR PEDIDO →
+                    {enviandoPedido ? "REGISTRANDO…" : "REGISTRAR PEDIDO →"}
                   </button>
 
                   <div className="text-[10px] text-stone-500 text-center leading-relaxed pt-2">
-                    Esta es una demo. Al confirmar, el pedido queda registrado en el sistema interno pero no se envía a los proveedores.
+                    Al confirmar, el pedido se guarda y podrás descargarlo en PDF o enviarlo por WhatsApp a tus proveedores.
                   </div>
                 </>
               )}
@@ -2259,6 +2718,158 @@ function CatalogoApp({ usuario, onLogout }) {
           </div>
         </div>
       )}
+
+      {/* MODAL PRODUCTO NO LISTADO */}
+      {modalNoListadoAbierto && (
+        <ModalProductoNoListado
+          onCancelar={() => setModalNoListadoAbierto(false)}
+          onAñadir={(item) => {
+            añadirNoListado(item);
+            setModalNoListadoAbierto(false);
+            // Abrir el carrito tras añadirlo
+            setTimeout(() => setCarritoAbierto(true), 100);
+          }}
+        />
+      )}
+
+      {/* BOTÓN FLOTANTE "+ Producto no listado" — solo si NO está abierto el carrito ni el modal */}
+      {!carritoAbierto && !productoSel && !modalNoListadoAbierto && (
+        <button
+          onClick={() => setModalNoListadoAbierto(true)}
+          className="fixed bottom-4 left-4 z-20 bg-stone-900 text-amber-400 border-2 border-stone-900 shadow-[4px_4px_0_0_rgba(0,0,0,1)] hover:bg-amber-400 hover:text-stone-900 transition-all px-3 py-2 text-[10px] font-black tracking-widest"
+          style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}
+        >
+          + PEDIR PRODUCTO NO LISTADO
+        </button>
+      )}
+    </div>
+  );
+}
+
+// =========================================================
+//  Modal: pedir un producto que no está en el catálogo
+// =========================================================
+function ModalProductoNoListado({ onCancelar, onAñadir }) {
+  const [desc, setDesc] = useState("");
+  const [cantidad, setCantidad] = useState(1);
+  const [unidad, setUnidad] = useState("uni");
+  const [proveedor, setProveedor] = useState("indistinto");
+
+  const puedeAñadir = desc.trim().length > 2 && cantidad > 0;
+
+  const handleAñadir = () => {
+    if (!puedeAñadir) return;
+    onAñadir({ desc, cantidad, unidad, proveedor });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="absolute inset-0 bg-stone-900/50" onClick={onCancelar} />
+      <div className="relative bg-white border-4 border-stone-900 w-full max-w-md shadow-[8px_8px_0_0_rgba(0,0,0,1)]">
+        <div className="bg-amber-500 border-b-4 border-stone-900 p-4 flex items-center justify-between">
+          <h3 className="font-black text-base" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+            PEDIR PRODUCTO NO LISTADO
+          </h3>
+          <button onClick={onCancelar} className="bg-stone-900 text-amber-400 p-1.5 border-2 border-stone-900">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="p-4 space-y-3">
+          <div className="text-[11px] text-stone-600">
+            Indica qué producto necesitas. Lo añadirás al pedido sin precio y el administrador lo confirmará con el proveedor.
+          </div>
+
+          <div>
+            <label className="font-bold text-[10px] tracking-widest text-stone-700 mb-1 block">
+              DESCRIPCIÓN DEL PRODUCTO
+            </label>
+            <textarea
+              value={desc}
+              onChange={(e) => setDesc(e.target.value)}
+              placeholder="Ej: Codo PVC evacuación 200mm, color blanco..."
+              rows={3}
+              className="w-full border-2 border-stone-900 bg-white p-2 text-xs focus:outline-none focus:bg-amber-50 font-mono resize-none"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="font-bold text-[10px] tracking-widest text-stone-700 mb-1 block">
+                CANTIDAD
+              </label>
+              <input
+                type="number"
+                min="0.01"
+                step="any"
+                value={cantidad}
+                onChange={(e) => setCantidad(parseFloat(e.target.value) || 0)}
+                className="w-full border-2 border-stone-900 bg-white p-2 text-xs focus:outline-none focus:bg-amber-50 font-mono"
+              />
+            </div>
+            <div>
+              <label className="font-bold text-[10px] tracking-widest text-stone-700 mb-1 block">
+                UNIDAD
+              </label>
+              <select
+                value={unidad}
+                onChange={(e) => setUnidad(e.target.value)}
+                className="w-full border-2 border-stone-900 bg-white p-2 text-xs focus:outline-none focus:bg-amber-50 font-mono"
+              >
+                <option value="uni">unidades</option>
+                <option value="m">metros</option>
+                <option value="kg">kilos</option>
+                <option value="L">litros</option>
+                <option value="caja">cajas</option>
+                <option value="rollo">rollos</option>
+                <option value="par">pares</option>
+                <option value="día">días</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label className="font-bold text-[10px] tracking-widest text-stone-700 mb-1 block">
+              PROVEEDOR PREFERIDO
+            </label>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { v: "indistinto", t: "Cualquiera" },
+                { v: "aqua",       t: "Aquatubo" },
+                { v: "aram",       t: "Aramburu" },
+              ].map(opt => (
+                <button key={opt.v} onClick={() => setProveedor(opt.v)}
+                        className={`p-2 text-[10px] font-bold tracking-widest border-2 border-stone-900 transition-all ${
+                          proveedor === opt.v
+                            ? (opt.v === "aqua" ? "bg-emerald-700 text-white"
+                               : opt.v === "aram" ? "bg-amber-700 text-white"
+                               : "bg-stone-900 text-amber-400")
+                            : "bg-white text-stone-900 hover:bg-stone-100"
+                        }`}>
+                  {opt.t}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex gap-2 pt-2 border-t-2 border-stone-200">
+            <button onClick={onCancelar}
+                    className="flex-1 text-[10px] font-bold tracking-widest p-3 border-2 border-stone-900 bg-white hover:bg-stone-100">
+              CANCELAR
+            </button>
+            <button onClick={handleAñadir}
+                    disabled={!puedeAñadir}
+                    className={`flex-[2] text-xs font-black tracking-widest p-3 border-2 border-stone-900 transition-all ${
+                      puedeAñadir
+                        ? "bg-stone-900 text-amber-400 hover:bg-amber-400 hover:text-stone-900"
+                        : "bg-stone-200 text-stone-400 cursor-not-allowed"
+                    }`}
+                    style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+              ✓ AÑADIR AL PEDIDO
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

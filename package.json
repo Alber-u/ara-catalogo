@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "Catálogo de pedidos ARA Corporate · Comparativa Aquatubo vs Aramburu",
+  "description": "Cat\u00e1logo de pedidos ARA Corporate \u00b7 Comparativa Aquatubo vs Aramburu",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -12,7 +12,8 @@
   "dependencies": {
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "lucide-react": "^0.383.0"
+    "lucide-react": "^0.383.0",
+    "jspdf": "^2.5.1"
   },
   "devDependencies": {
     "@types/react": "^18.3.3",
