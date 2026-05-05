@@ -5518,10 +5518,27 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
       const bajadas = aps.filter(a => a.baja).length;
       const cantTotal = aps.reduce((acc, a) => acc + a.cantidad, 0);
       const diffPromedio = aps.reduce((acc, a) => acc + a.diff, 0) / aps.length;
+
+      // % ponderado REAL: sobrecoste / lo que hubiera gastado al precio antiguo
+      // (mucho más fiable que la media aritmética de % cuando hay outliers)
+      const apsConPrecioActual = aps.filter(a => a.precioActual !== null && a.precioActual > 0);
+      const gastoAntiguo = apsConPrecioActual.reduce((acc, a) => acc + (a.precioActual * a.cantidad), 0);
+      const gastoNuevo   = apsConPrecioActual.reduce((acc, a) => acc + (a.precioFactura * a.cantidad), 0);
+      const pctPonderado = gastoAntiguo > 0 ? ((gastoNuevo - gastoAntiguo) / gastoAntiguo) * 100 : 0;
+
+      // Precio "antes" y "después" medios ponderados por cantidad
+      const precioAntesMedio = gastoAntiguo > 0 && cantTotal > 0
+        ? gastoAntiguo / apsConPrecioActual.reduce((acc, a) => acc + a.cantidad, 0)
+        : null;
+      const precioNuevoMedio = cantTotal > 0
+        ? aps.reduce((acc, a) => acc + (a.precioFactura * a.cantidad), 0) / cantTotal
+        : null;
+
+      // Conservamos pctPromedio aritmético para compat (se usa en algún sitio), pero el bueno es pctPonderado
       const pctPromedio = aps.reduce((acc, a) => acc + a.pct, 0) / aps.length;
       const precioMin = Math.min(...aps.map(a => a.precioFactura));
       const precioMax = Math.max(...aps.map(a => a.precioFactura));
-      return { ...p, impactoTotal, subidas, bajadas, cantTotal, diffPromedio, pctPromedio, precioMin, precioMax };
+      return { ...p, impactoTotal, subidas, bajadas, cantTotal, diffPromedio, pctPromedio, pctPonderado, precioAntesMedio, precioNuevoMedio, precioMin, precioMax };
     });
     return lista;
   }, [facturas]);
@@ -5543,7 +5560,7 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
       .sort((a, b) => {
         if (orden === "impacto")    return Math.abs(b.impactoTotal) - Math.abs(a.impactoTotal);
         if (orden === "frecuencia") return b.apariciones.length - a.apariciones.length;
-        if (orden === "pct")        return Math.abs(b.pctPromedio) - Math.abs(a.pctPromedio);
+        if (orden === "pct")        return Math.abs(b.pctPonderado) - Math.abs(a.pctPonderado);
         return 0;
       });
   }, [agregado, orden, filtroDireccion, busquedaProd]);
@@ -5558,86 +5575,250 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
     let jsPDFmod;
     try { jsPDFmod = await import("jspdf"); } catch(e) { alert("No se pudo cargar PDF"); return; }
     const { jsPDF } = jsPDFmod;
-    const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "landscape" });
-    const PW = 297, ML = 12, MR = 12;
-    let y = 14;
+    const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
+    const PW = 210, PH = 297, ML = 15, MR = 15;
+    const W = PW - ML - MR;
 
-    doc.setFont("helvetica", "bold"); doc.setFontSize(15);
-    doc.text("ANALISIS DE VARIACION DE PRECIOS POR PRODUCTO", PW / 2, y, { align: "center" }); y += 6;
-    doc.setFontSize(8); doc.setFont("helvetica", "normal");
-    doc.text("ARA Corporate Sociedad de Inversiones, SL · CIF B90488222", PW / 2, y, { align: "center" }); y += 4;
-    doc.text(`Fecha del informe: ${new Date().toLocaleDateString("es-ES", { dateStyle: "long" })}`, PW / 2, y, { align: "center" }); y += 6;
+    // Datos generales
+    const proveedor = filtrosActivos.proveedor !== "todos"
+      ? filtrosActivos.proveedor
+      : (facturas.find(f => f.datosExtraidos?.proveedor)?.datosExtraidos?.proveedor || "Proveedor");
+    const fechas = facturas.map(f => f.datosExtraidos?.fecha).filter(Boolean).sort();
+    const fechaIni = fechas[0] ? new Date(fechas[0]).toLocaleDateString("es-ES") : "—";
+    const fechaFin = fechas[fechas.length - 1] ? new Date(fechas[fechas.length - 1]).toLocaleDateString("es-ES") : "—";
+    const totalFacturado = facturas.reduce((acc, f) => {
+      const t = parseFloat(f.datosExtraidos?.total) || 0;
+      if (t > 0) return acc + t;
+      return acc + (f.lineasRevision || []).reduce((a, l) => a + (parseFloat(l.lineaOriginal?.importe_linea) || 0), 0);
+    }, 0);
+    const pctSobreFact = totalFacturado > 0 ? (totalImpacto / totalFacturado) * 100 : 0;
 
-    // Resumen
-    doc.setDrawColor(0); doc.setLineWidth(0.4); doc.line(ML, y, PW - MR, y); y += 4;
-    doc.setFontSize(8.5); doc.setFont("helvetica", "bold");
-    doc.text(`Productos analizados: ${totalProductos}`, ML, y);
-    doc.text(`Apariciones totales: ${totalApariciones}`, ML + 70, y);
-    doc.text(`Facturas analizadas: ${facturas.length}`, ML + 140, y);
-    doc.text(`Impacto neto: EUR${totalImpacto >= 0 ? "+" : ""}${totalImpacto.toFixed(2)}`, ML + 210, y);
-    y += 4; doc.setLineWidth(0.4); doc.line(ML, y, PW - MR, y); y += 5;
+    // Solo subidas significativas para top
+    const subidasReales = lista.filter(p => p.impactoTotal > 0.5).sort((a, b) => b.impactoTotal - a.impactoTotal);
+    const top = subidasReales.slice(0, 5);
+    const concentracionTop = top.reduce((acc, p) => acc + p.impactoTotal, 0);
+    const pctConcentracion = totalImpacto > 0 ? (concentracionTop / totalImpacto) * 100 : 0;
 
-    // Filtros aplicados
-    if (filtrosActivos.busqueda || filtrosActivos.proveedor !== "todos" || filtrosActivos.estado !== "todos") {
-      doc.setFontSize(7.5); doc.setFont("helvetica", "italic"); doc.setTextColor(100);
-      const filtros = [];
-      if (filtrosActivos.busqueda) filtros.push(`busqueda: "${filtrosActivos.busqueda}"`);
-      if (filtrosActivos.proveedor !== "todos") filtros.push(`proveedor: ${filtrosActivos.proveedor}`);
-      if (filtrosActivos.estado !== "todos") filtros.push(`estado: ${filtrosActivos.estado}`);
-      doc.text(`Filtros aplicados: ${filtros.join(" · ")}`, ML, y); y += 5;
-      doc.setTextColor(0);
-    }
+    let y = 18;
 
-    // Tabla
-    const cols = { ref: ML, desc: ML + 18, vec: ML + 130, pct: ML + 145, dif: ML + 165, prov: ML + 188, imp: ML + 220, fac: ML + 255 };
-    doc.setFontSize(7.5); doc.setFont("helvetica", "bold"); doc.setFillColor(40); doc.setTextColor(255);
-    doc.rect(ML, y - 3, PW - ML - MR, 5, "F");
-    doc.text("Ref",       cols.ref,  y);
-    doc.text("Producto",  cols.desc, y);
-    doc.text("Veces",     cols.vec,  y, { align: "right" });
-    doc.text("% prom",    cols.pct,  y, { align: "right" });
-    doc.text("Dif/u prom",cols.dif,  y, { align: "right" });
-    doc.text("Cant total",cols.prov, y, { align: "right" });
-    doc.text("Impacto EUR",cols.imp, y, { align: "right" });
-    doc.text("# Facturas", cols.fac, y, { align: "right" });
-    y += 4;
-    doc.setTextColor(0); doc.setFont("helvetica", "normal"); doc.setFontSize(7);
-
-    for (const p of lista) {
-      if (y > 195) { doc.addPage(); y = 14; }
-      const desc = (p.descCat || p.descFact).substring(0, 65);
-      doc.text(p.ref || "—", cols.ref, y);
-      doc.text(desc, cols.desc, y);
-      doc.text(String(p.apariciones.length), cols.vec, y, { align: "right" });
-      doc.text(`${p.pctPromedio >= 0 ? "+" : ""}${p.pctPromedio.toFixed(1)}%`, cols.pct, y, { align: "right" });
-      doc.text(`${p.diffPromedio >= 0 ? "+" : ""}${p.diffPromedio.toFixed(3)}`, cols.dif, y, { align: "right" });
-      doc.text(p.cantTotal.toFixed(0), cols.prov, y, { align: "right" });
-      const impStr = `${p.impactoTotal >= 0 ? "+" : ""}${p.impactoTotal.toFixed(2)}`;
-      if (p.impactoTotal > 0.01) doc.setTextColor(180, 0, 0);
-      else if (p.impactoTotal < -0.01) doc.setTextColor(0, 130, 0);
-      doc.text(impStr, cols.imp, y, { align: "right" });
-      doc.setTextColor(0);
-      doc.text(String(p.apariciones.length), cols.fac, y, { align: "right" });
-      y += 3.8;
-    }
-
-    // Total
-    if (y > 190) { doc.addPage(); y = 14; }
-    y += 3;
-    doc.setLineWidth(0.4); doc.line(ML, y, PW - MR, y); y += 4;
-    doc.setFont("helvetica", "bold"); doc.setFontSize(9);
-    doc.text("IMPACTO NETO TOTAL:", cols.imp - 30, y, { align: "right" });
-    if (totalImpacto > 0.01) doc.setTextColor(180, 0, 0);
-    else if (totalImpacto < -0.01) doc.setTextColor(0, 130, 0);
-    doc.text(`EUR${totalImpacto >= 0 ? "+" : ""}${totalImpacto.toFixed(2)}`, cols.imp, y, { align: "right" });
+    // ═══ CABECERA ═══
+    doc.setFillColor(20); doc.rect(0, 0, PW, 12, "F");
+    doc.setTextColor(255, 200, 0); doc.setFont("helvetica", "bold"); doc.setFontSize(8);
+    doc.text("ARA CORPORATE SOCIEDAD DE INVERSIONES, SL", ML, 7);
+    doc.setFontSize(7); doc.setTextColor(255);
+    doc.text("CIF B90488222 · Avd San Francisco Javier 9 PL6 MOD 9, 41018 Sevilla", ML, 10);
     doc.setTextColor(0);
 
-    // Pie
-    y += 8;
-    doc.setFont("helvetica", "italic"); doc.setFontSize(7); doc.setTextColor(100);
-    doc.text("Informe generado automaticamente desde el sistema de gestion de pedidos ARA Corporate.", ML, y);
+    // Título
+    doc.setFont("helvetica", "bold"); doc.setFontSize(13);
+    doc.text("INFORME DE DESVIACIONES DE PRECIO", PW / 2, y, { align: "center" }); y += 5;
+    doc.setFontSize(9); doc.setFont("helvetica", "normal");
+    doc.text(`Proveedor: ${proveedor}`, PW / 2, y, { align: "center" }); y += 5;
+    doc.setFontSize(7.5); doc.setTextColor(80);
+    doc.text(`Período analizado: ${fechaIni} — ${fechaFin}  ·  ${facturas.length} facturas  ·  ${totalApariciones} líneas analizadas`, PW / 2, y, { align: "center" });
+    doc.setTextColor(0); y += 6;
 
-    doc.save(`Analisis_Productos_${new Date().toISOString().slice(0,10)}.pdf`);
+    // ═══ BLOQUE 1: RESUMEN EJECUTIVO ═══
+    doc.setFillColor(245, 240, 230); doc.rect(ML, y, W, 38, "F");
+    doc.setDrawColor(0); doc.setLineWidth(0.5); doc.rect(ML, y, W, 38);
+    y += 5;
+    doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(80);
+    doc.text("RESUMEN EJECUTIVO", ML + 3, y); y += 5;
+
+    doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(0);
+    const c1 = ML + 3, c2 = ML + 70, c3 = ML + 110;
+    doc.text(`Importe total facturado:`, c1, y);
+    doc.setFont("helvetica", "bold"); doc.text(`EUR ${totalFacturado.toFixed(2)}`, c2, y);
+    doc.setFont("helvetica", "normal"); y += 4;
+
+    doc.text(`Sobrecoste detectado:`, c1, y);
+    if (totalImpacto > 0.01) doc.setTextColor(180, 0, 0);
+    else if (totalImpacto < -0.01) doc.setTextColor(0, 130, 0);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(11);
+    doc.text(`${totalImpacto >= 0 ? "+" : ""}EUR ${totalImpacto.toFixed(2)}`, c2, y);
+    if (pctSobreFact !== 0) {
+      doc.setFontSize(8.5);
+      doc.text(`(${pctSobreFact >= 0 ? "+" : ""}${pctSobreFact.toFixed(1)}% sobre facturado)`, c2 + 35, y);
+    }
+    doc.setTextColor(0); doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); y += 5;
+
+    doc.text(`Productos con desviación:`, c1, y);
+    doc.setFont("helvetica", "bold"); doc.text(`${subidasReales.length}`, c2, y);
+    doc.setFont("helvetica", "normal"); y += 4;
+
+    doc.text(`Concentración del impacto:`, c1, y);
+    doc.setFont("helvetica", "bold");
+    doc.text(`Top ${top.length} productos = ${pctConcentracion.toFixed(0)}% del sobrecoste total`, c2, y);
+    doc.setFont("helvetica", "normal"); y += 7;
+
+    // Mensaje destacado
+    doc.setFillColor(255, 230, 200); doc.setDrawColor(180, 100, 0); doc.setLineWidth(0.4);
+    const msg = totalImpacto > 0
+      ? `Las facturas analizadas reflejan un sobrecoste de EUR ${totalImpacto.toFixed(2)} respecto a los precios pactados.`
+      : `Las facturas analizadas reflejan un ahorro de EUR ${Math.abs(totalImpacto).toFixed(2)}.`;
+    doc.rect(ML + 3, y - 3, W - 6, 6, "FD");
+    doc.setFont("helvetica", "italic"); doc.setFontSize(8); doc.setTextColor(60);
+    doc.text(msg, ML + 5, y + 1);
+    doc.setTextColor(0); doc.setFont("helvetica", "normal");
+    y += 10;
+
+    // ═══ BLOQUE 2: TOP DESVIACIONES ═══
+    if (top.length > 0) {
+      doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(150, 0, 0);
+      doc.text(`PRINCIPALES DESVIACIONES (${pctConcentracion.toFixed(0)}% del sobrecoste)`, ML, y);
+      doc.setTextColor(0); y += 5;
+
+      doc.setFontSize(7.5); doc.setFont("helvetica", "italic"); doc.setTextColor(100);
+      doc.text("Productos con mayor impacto económico, ordenados por sobrecoste:", ML, y);
+      doc.setTextColor(0); doc.setFont("helvetica", "normal"); y += 5;
+
+      // Tabla compacta del top — formato visual destacado
+      for (const p of top) {
+        if (y > PH - 50) { doc.addPage(); y = 18; }
+
+        // Cuadro por producto
+        const altoBox = 22;
+        doc.setFillColor(255, 248, 240); doc.setDrawColor(180, 100, 0); doc.setLineWidth(0.4);
+        doc.rect(ML, y, W, altoBox, "FD");
+
+        // Nombre + ref
+        doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.setTextColor(0);
+        const nombreCorto = (p.descCat || p.descFact).substring(0, 70);
+        doc.text(nombreCorto, ML + 3, y + 5);
+        doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(100);
+        doc.text(`Ref: ${p.ref || "—"}`, ML + 3, y + 9);
+
+        // Precios
+        doc.setFontSize(8); doc.setTextColor(0);
+        doc.text(`Precio anterior:`, ML + 3, y + 14);
+        doc.setFont("helvetica", "bold");
+        doc.text(p.precioAntesMedio !== null ? `EUR ${p.precioAntesMedio.toFixed(4)}` : "—", ML + 28, y + 14);
+
+        doc.setFont("helvetica", "normal");
+        doc.text(`Precio facturado:`, ML + 3, y + 18);
+        doc.setFont("helvetica", "bold"); doc.setTextColor(180, 0, 0);
+        doc.text(p.precioNuevoMedio !== null ? `EUR ${p.precioNuevoMedio.toFixed(4)}` : "—", ML + 28, y + 18);
+        doc.setTextColor(0); doc.setFont("helvetica", "normal");
+
+        // Detalles centrales
+        doc.setFontSize(7.5);
+        doc.text(`Apariciones: ${p.apariciones.length} ${p.apariciones.length === 1 ? "factura" : "facturas"}`, ML + 75, y + 14);
+        doc.text(`Cantidad total: ${p.cantTotal.toFixed(0)} ${p.unidad}`, ML + 75, y + 18);
+
+        // Subida % e impacto a la derecha (destacado)
+        doc.setFont("helvetica", "bold"); doc.setFontSize(11); doc.setTextColor(180, 0, 0);
+        doc.text(`${p.pctPonderado >= 0 ? "+" : ""}${p.pctPonderado.toFixed(1)}%`, PW - MR - 3, y + 9, { align: "right" });
+        doc.setFontSize(13);
+        doc.text(`${p.impactoTotal >= 0 ? "+" : ""}EUR ${p.impactoTotal.toFixed(2)}`, PW - MR - 3, y + 18, { align: "right" });
+        doc.setTextColor(0); doc.setFont("helvetica", "normal");
+
+        y += altoBox + 3;
+      }
+
+      y += 3;
+    }
+
+    // ═══ BLOQUE 3: PETICIÓN ═══
+    if (y > PH - 45) { doc.addPage(); y = 18; }
+    doc.setFillColor(40, 40, 40); doc.rect(ML, y, W, 30, "F");
+    doc.setTextColor(255, 200, 0); doc.setFont("helvetica", "bold"); doc.setFontSize(9);
+    doc.text("SOLICITAMOS A VUESTRO DEPARTAMENTO COMERCIAL:", ML + 4, y + 6);
+    doc.setTextColor(255); doc.setFont("helvetica", "normal"); doc.setFontSize(8);
+    doc.text("[ ]  Aclaración sobre las desviaciones de precio detectadas en este informe.", ML + 4, y + 13);
+    doc.text("[ ]  Regularización de los precios al nivel pactado en condiciones comerciales.", ML + 4, y + 18);
+    doc.text(`[ ]  Abono o nota de crédito por el sobrecoste de EUR ${totalImpacto.toFixed(2)} correspondiente al período analizado.`, ML + 4, y + 23);
+    doc.text("[ ]  Reunión comercial para revisar las condiciones aplicadas.", ML + 4, y + 28);
+    doc.setTextColor(0);
+    y += 34;
+
+    doc.setFont("helvetica", "italic"); doc.setFontSize(7); doc.setTextColor(100);
+    doc.text("Quedamos a la espera de su respuesta a la mayor brevedad posible.", ML, y);
+    doc.setTextColor(0); y += 6;
+
+    // ═══ ANEXO: TABLA COMPLETA ═══
+    if (lista.length > 0) {
+      doc.addPage();
+      y = 18;
+
+      // Cabecera anexo
+      doc.setFillColor(20); doc.rect(0, 0, PW, 12, "F");
+      doc.setTextColor(255, 200, 0); doc.setFont("helvetica", "bold"); doc.setFontSize(8);
+      doc.text("ANEXO TÉCNICO · DETALLE COMPLETO POR PRODUCTO", ML, 7);
+      doc.setFontSize(7); doc.setTextColor(255);
+      doc.text(`${proveedor} · ${fechaIni} - ${fechaFin}`, ML, 10);
+      doc.setTextColor(0);
+
+      doc.setFont("helvetica", "italic"); doc.setFontSize(7.5); doc.setTextColor(100);
+      doc.text(`Listado completo de los ${lista.length} productos con desviación detectada.`, ML, y);
+      doc.text(`% REAL = sobrecoste real ponderado por cantidad (no media aritmética).`, ML, y + 3);
+      doc.setTextColor(0); y += 8;
+
+      // Tabla anexo (vertical, A4 portrait)
+      const cols = { ref: ML, desc: ML + 16, vec: ML + 95, pAnt: ML + 108, pNue: ML + 130, pct: ML + 152, imp: ML + 168 };
+      doc.setFontSize(7); doc.setFont("helvetica", "bold"); doc.setFillColor(40); doc.setTextColor(255);
+      doc.rect(ML, y - 3, W, 5, "F");
+      doc.text("Ref",       cols.ref,  y);
+      doc.text("Producto",  cols.desc, y);
+      doc.text("Veces",     cols.vec,  y, { align: "right" });
+      doc.text("P. ant.",   cols.pAnt, y, { align: "right" });
+      doc.text("P. nuevo",  cols.pNue, y, { align: "right" });
+      doc.text("% real",    cols.pct,  y, { align: "right" });
+      doc.text("Impacto EUR", cols.imp + 16, y, { align: "right" });
+      y += 4;
+      doc.setTextColor(0); doc.setFont("helvetica", "normal"); doc.setFontSize(6.5);
+
+      for (const p of lista) {
+        if (y > PH - 18) {
+          doc.addPage(); y = 18;
+          // Repetir cabecera tabla
+          doc.setFontSize(7); doc.setFont("helvetica", "bold"); doc.setFillColor(40); doc.setTextColor(255);
+          doc.rect(ML, y - 3, W, 5, "F");
+          doc.text("Ref",       cols.ref,  y);
+          doc.text("Producto",  cols.desc, y);
+          doc.text("Veces",     cols.vec,  y, { align: "right" });
+          doc.text("P. ant.",   cols.pAnt, y, { align: "right" });
+          doc.text("P. nuevo",  cols.pNue, y, { align: "right" });
+          doc.text("% real",    cols.pct,  y, { align: "right" });
+          doc.text("Impacto EUR", cols.imp + 16, y, { align: "right" });
+          y += 4;
+          doc.setTextColor(0); doc.setFont("helvetica", "normal"); doc.setFontSize(6.5);
+        }
+        const desc = (p.descCat || p.descFact).substring(0, 50);
+        doc.text(p.ref || "—", cols.ref, y);
+        doc.text(desc, cols.desc, y);
+        doc.text(String(p.apariciones.length), cols.vec, y, { align: "right" });
+        doc.text(p.precioAntesMedio !== null ? p.precioAntesMedio.toFixed(4) : "—", cols.pAnt, y, { align: "right" });
+        doc.text(p.precioNuevoMedio !== null ? p.precioNuevoMedio.toFixed(4) : "—", cols.pNue, y, { align: "right" });
+        doc.text(`${p.pctPonderado >= 0 ? "+" : ""}${p.pctPonderado.toFixed(1)}%`, cols.pct, y, { align: "right" });
+        const impStr = `${p.impactoTotal >= 0 ? "+" : ""}${p.impactoTotal.toFixed(2)}`;
+        if (p.impactoTotal > 0.01) doc.setTextColor(180, 0, 0);
+        else if (p.impactoTotal < -0.01) doc.setTextColor(0, 130, 0);
+        doc.text(impStr, cols.imp + 16, y, { align: "right" });
+        doc.setTextColor(0);
+        y += 3.3;
+      }
+
+      // Total anexo
+      y += 2;
+      doc.setLineWidth(0.4); doc.line(ML, y, PW - MR, y); y += 4;
+      doc.setFont("helvetica", "bold"); doc.setFontSize(9);
+      doc.text("IMPACTO NETO TOTAL:", cols.imp + 16 - 30, y, { align: "right" });
+      if (totalImpacto > 0.01) doc.setTextColor(180, 0, 0);
+      else if (totalImpacto < -0.01) doc.setTextColor(0, 130, 0);
+      doc.text(`EUR ${totalImpacto >= 0 ? "+" : ""}${totalImpacto.toFixed(2)}`, cols.imp + 16, y, { align: "right" });
+      doc.setTextColor(0);
+    }
+
+    // Pie en última página
+    const pageCount = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i);
+      doc.setFont("helvetica", "italic"); doc.setFontSize(6.5); doc.setTextColor(120);
+      doc.text(`Página ${i} de ${pageCount}  ·  Informe generado automáticamente desde el sistema ARA Corporate  ·  ${new Date().toLocaleDateString("es-ES", { dateStyle: "long" })}`, PW / 2, PH - 6, { align: "center" });
+    }
+
+    const provSlug = proveedor.replace(/[^a-z0-9]/gi, "_").substring(0, 30);
+    doc.save(`Informe_Desviaciones_${provSlug}_${new Date().toISOString().slice(0,10)}.pdf`);
   };
 
   // Copiar resumen para email
@@ -5650,7 +5831,7 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
     lista.forEach(p => {
       const desc = (p.descCat || p.descFact).substring(0, 60);
       txt += `\n• ${desc} (ref ${p.ref || "—"})\n`;
-      txt += `  Aparece ${p.apariciones.length} veces · variación media ${p.pctPromedio >= 0 ? "+" : ""}${p.pctPromedio.toFixed(1)}% · impacto €${p.impactoTotal >= 0 ? "+" : ""}${p.impactoTotal.toFixed(2)}\n`;
+      txt += `  Aparece en ${p.apariciones.length} factura${p.apariciones.length === 1 ? "" : "s"} · ${p.precioAntesMedio !== null ? `€${p.precioAntesMedio.toFixed(4)} → €${p.precioNuevoMedio.toFixed(4)}` : "—"} (${p.pctPonderado >= 0 ? "+" : ""}${p.pctPonderado.toFixed(1)}%) · sobrecoste €${p.impactoTotal >= 0 ? "+" : ""}${p.impactoTotal.toFixed(2)}\n`;
     });
     navigator.clipboard.writeText(txt).then(
       () => alert("✅ Resumen copiado al portapapeles. Pégalo en tu email."),
@@ -5761,7 +5942,7 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
                     <th className="text-left p-2">REF</th>
                     <th className="text-left p-2">PRODUCTO</th>
                     <th className="text-right p-2 whitespace-nowrap">VECES</th>
-                    <th className="text-right p-2 whitespace-nowrap">% PROM</th>
+                    <th className="text-right p-2 whitespace-nowrap">% REAL</th>
                     <th className="text-right p-2 whitespace-nowrap">DIF/U PROM</th>
                     <th className="text-right p-2 whitespace-nowrap">CANT TOT</th>
                     <th className="text-right p-2 whitespace-nowrap">IMPACTO €</th>
@@ -5779,8 +5960,8 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
                           <td className="p-2 font-mono text-[10px]">{p.ref || "—"}</td>
                           <td className="p-2 font-bold">{p.descCat || p.descFact}</td>
                           <td className="p-2 text-right font-mono">{p.apariciones.length}</td>
-                          <td className={`p-2 text-right font-mono font-bold ${p.pctPromedio > 0 ? "text-red-700" : p.pctPromedio < 0 ? "text-emerald-700" : ""}`}>
-                            {p.pctPromedio >= 0 ? "+" : ""}{p.pctPromedio.toFixed(1)}%
+                          <td className={`p-2 text-right font-mono font-bold ${p.pctPonderado > 0 ? "text-red-700" : p.pctPonderado < 0 ? "text-emerald-700" : ""}`}>
+                            {p.pctPonderado >= 0 ? "+" : ""}{p.pctPonderado.toFixed(1)}%
                           </td>
                           <td className={`p-2 text-right font-mono ${p.diffPromedio > 0 ? "text-red-700" : p.diffPromedio < 0 ? "text-emerald-700" : ""}`}>
                             {p.diffPromedio >= 0 ? "+" : ""}€{p.diffPromedio.toFixed(3)}
