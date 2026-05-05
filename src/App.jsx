@@ -5191,7 +5191,7 @@ function PestañaFacturas({ api, pin }) {
           <span>FACTURAS IMPORTADAS ({facturas.length})</span>
           {(() => {
             // Impacto agregado de todas las facturas
-            let totalSube = 0, totalBaja = 0, nFactImpacto = 0;
+            let totalSube = 0, totalBaja = 0, nFactImpacto = 0, totalFacturado = 0;
             facturas.forEach(f => {
               let subF = 0, bajF = 0;
               (f.lineasRevision || []).forEach(l => {
@@ -5201,16 +5201,29 @@ function PestañaFacturas({ api, pin }) {
                 if (l.variacionPrecio.sube) subF += imp;
                 if (l.variacionPrecio.baja) bajF += imp;
               });
-              if (subF !== 0 || bajF !== 0) nFactImpacto++;
+              if (subF !== 0 || bajF !== 0) {
+                nFactImpacto++;
+                // Total robusto: usa el extraído por IA, o si no, suma las líneas
+                const tExtraido = parseFloat(f.datosExtraidos?.total) || 0;
+                const tSumado = (f.lineasRevision || []).reduce((acc, l) => acc + (parseFloat(l.lineaOriginal?.importe_linea) || 0), 0);
+                totalFacturado += tExtraido > 0 ? tExtraido : tSumado;
+              }
               totalSube += subF; totalBaja += bajF;
             });
             const totalNeto = totalSube + totalBaja;
             if (nFactImpacto === 0) return null;
+            const pctGlobal = totalFacturado > 0 ? (totalNeto / totalFacturado) * 100 : null;
             return (
-              <span className="font-mono normal-case tracking-normal flex items-center gap-2">
-                <span className="opacity-70">Impacto total:</span>
+              <span className="font-mono normal-case tracking-normal flex items-center gap-2 flex-wrap">
+                {totalFacturado > 0 && (
+                  <span className="opacity-70">Facturado: €{totalFacturado.toFixed(2)} ·</span>
+                )}
+                <span className="opacity-70">Impacto:</span>
                 <span className={totalNeto > 0.01 ? "text-red-400" : totalNeto < -0.01 ? "text-emerald-400" : "text-stone-300"}>
                   {totalNeto > 0.01 ? "📈 +" : totalNeto < -0.01 ? "📉 " : "⚖️ "}€{Math.abs(totalNeto).toFixed(2)}
+                  {pctGlobal !== null && (
+                    <span className="ml-1 text-[9px]">({totalNeto >= 0 ? "+" : ""}{pctGlobal.toFixed(1)}%)</span>
+                  )}
                 </span>
                 <span className="text-[9px] opacity-60">
                   (▲€{totalSube.toFixed(2)} · ▼€{Math.abs(totalBaja).toFixed(2)})
@@ -5237,6 +5250,11 @@ function PestañaFacturas({ api, pin }) {
               });
               const impactoNeto = impactoSube + impactoBaja;
               const tieneImpacto = nSube > 0 || nBaja > 0;
+              // Total de la factura: primero intenta el extraído por IA, si no, suma las líneas
+              const totalExtraido = parseFloat(f.datosExtraidos?.total) || 0;
+              const totalSumado = (f.lineasRevision || []).reduce((acc, l) => acc + (parseFloat(l.lineaOriginal?.importe_linea) || 0), 0);
+              const totalFactura = totalExtraido > 0 ? totalExtraido : totalSumado;
+              const pctImpacto = totalFactura > 0 && tieneImpacto ? (impactoNeto / totalFactura) * 100 : null;
               return (
               <div key={f.id} className="p-3 hover:bg-amber-50 flex items-center gap-3">
                 <div className="text-2xl">📄</div>
@@ -5247,10 +5265,15 @@ function PestañaFacturas({ api, pin }) {
                     {f.datosExtraidos?.proveedor && <span className="ml-2 font-bold">{f.datosExtraidos.proveedor}</span>}
                     {f.datosExtraidos?.numero_factura && <span className="ml-2">Fac. {f.datosExtraidos.numero_factura}</span>}
                   </div>
-                  <div className="flex items-center gap-2 mt-1">
+                  <div className="flex items-center gap-2 mt-1 flex-wrap">
                     <span className={`text-[9px] px-1.5 py-0.5 font-bold rounded-sm ${estadoColor[f.estado] || "bg-stone-200"}`}>
                       {estadoLabel[f.estado] || f.estado}
                     </span>
+                    {totalFactura > 0 && (
+                      <span className="text-[10px] font-mono font-bold bg-stone-900 text-amber-400 px-2 py-0.5 rounded-sm">
+                        TOTAL €{totalFactura.toFixed(2)}
+                      </span>
+                    )}
                     {f.resumen && (
                       <span className="text-[9px] text-stone-500">
                         {f.resumen.actualizados} actualizados · {f.resumen.nuevos} nuevos · {f.resumen.ignorados} ignorados
@@ -5276,6 +5299,11 @@ function PestañaFacturas({ api, pin }) {
                     }`}>
                       {impactoNeto > 0.01 ? "📈 +" : impactoNeto < -0.01 ? "📉 " : "⚖️ "}
                       €{Math.abs(impactoNeto).toFixed(2)}
+                      {pctImpacto !== null && (
+                        <span className="text-[10px] font-bold ml-1 opacity-80">
+                          ({impactoNeto >= 0 ? "+" : ""}{pctImpacto.toFixed(1)}%)
+                        </span>
+                      )}
                     </div>
                     <div className="text-[9px] font-mono text-stone-600 mt-0.5">
                       {nSube > 0 && <span className="text-red-700">▲€{impactoSube.toFixed(2)}</span>}
