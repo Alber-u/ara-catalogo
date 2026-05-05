@@ -5187,14 +5187,57 @@ function PestañaFacturas({ api, pin }) {
 
       {/* Lista de facturas */}
       <div className="bg-white border-2 border-stone-900">
-        <div className="bg-stone-900 text-amber-400 p-2 text-[10px] font-bold tracking-widest">FACTURAS IMPORTADAS ({facturas.length})</div>
+        <div className="bg-stone-900 text-amber-400 p-2 text-[10px] font-bold tracking-widest flex items-center justify-between gap-2 flex-wrap">
+          <span>FACTURAS IMPORTADAS ({facturas.length})</span>
+          {(() => {
+            // Impacto agregado de todas las facturas
+            let totalSube = 0, totalBaja = 0, nFactImpacto = 0;
+            facturas.forEach(f => {
+              let subF = 0, bajF = 0;
+              (f.lineasRevision || []).forEach(l => {
+                if (l.estado === "ignorado" || !l.variacionPrecio) return;
+                const cant = parseFloat(l.lineaOriginal?.cantidad) || 0;
+                const imp = (l.variacionPrecio.diff || 0) * cant;
+                if (l.variacionPrecio.sube) subF += imp;
+                if (l.variacionPrecio.baja) bajF += imp;
+              });
+              if (subF !== 0 || bajF !== 0) nFactImpacto++;
+              totalSube += subF; totalBaja += bajF;
+            });
+            const totalNeto = totalSube + totalBaja;
+            if (nFactImpacto === 0) return null;
+            return (
+              <span className="font-mono normal-case tracking-normal flex items-center gap-2">
+                <span className="opacity-70">Impacto total:</span>
+                <span className={totalNeto > 0.01 ? "text-red-400" : totalNeto < -0.01 ? "text-emerald-400" : "text-stone-300"}>
+                  {totalNeto > 0.01 ? "📈 +" : totalNeto < -0.01 ? "📉 " : "⚖️ "}€{Math.abs(totalNeto).toFixed(2)}
+                </span>
+                <span className="text-[9px] opacity-60">
+                  (▲€{totalSube.toFixed(2)} · ▼€{Math.abs(totalBaja).toFixed(2)})
+                </span>
+              </span>
+            );
+          })()}
+        </div>
         {cargando ? (
           <div className="p-8 text-center text-stone-500 text-sm">Cargando...</div>
         ) : facturas.length === 0 ? (
           <div className="p-8 text-center text-stone-500 text-sm">No hay facturas importadas aún</div>
         ) : (
           <div className="divide-y divide-stone-200">
-            {facturas.map(f => (
+            {facturas.map(f => {
+              // Calcular impacto económico de la factura (solo líneas con variación, ignorando "ignorado")
+              let impactoSube = 0, impactoBaja = 0, nSube = 0, nBaja = 0;
+              (f.lineasRevision || []).forEach(l => {
+                if (l.estado === "ignorado" || !l.variacionPrecio) return;
+                const cant = parseFloat(l.lineaOriginal?.cantidad) || 0;
+                const impacto = (l.variacionPrecio.diff || 0) * cant;
+                if (l.variacionPrecio.sube) { impactoSube += impacto; nSube++; }
+                if (l.variacionPrecio.baja) { impactoBaja += impacto; nBaja++; }
+              });
+              const impactoNeto = impactoSube + impactoBaja;
+              const tieneImpacto = nSube > 0 || nBaja > 0;
+              return (
               <div key={f.id} className="p-3 hover:bg-amber-50 flex items-center gap-3">
                 <div className="text-2xl">📄</div>
                 <div className="flex-1 min-w-0">
@@ -5218,6 +5261,30 @@ function PestañaFacturas({ api, pin }) {
                     )}
                   </div>
                 </div>
+
+                {/* Impacto económico de la factura */}
+                {tieneImpacto && (
+                  <div className={`shrink-0 text-right border-2 px-2 py-1 ${
+                    impactoNeto > 0.01 ? "bg-red-50 border-red-600" :
+                    impactoNeto < -0.01 ? "bg-emerald-50 border-emerald-600" :
+                    "bg-stone-50 border-stone-400"
+                  }`}>
+                    <div className={`text-sm font-black font-mono leading-none ${
+                      impactoNeto > 0.01 ? "text-red-700" :
+                      impactoNeto < -0.01 ? "text-emerald-700" :
+                      "text-stone-700"
+                    }`}>
+                      {impactoNeto > 0.01 ? "📈 +" : impactoNeto < -0.01 ? "📉 " : "⚖️ "}
+                      €{Math.abs(impactoNeto).toFixed(2)}
+                    </div>
+                    <div className="text-[9px] font-mono text-stone-600 mt-0.5">
+                      {nSube > 0 && <span className="text-red-700">▲€{impactoSube.toFixed(2)}</span>}
+                      {nSube > 0 && nBaja > 0 && <span className="mx-1">·</span>}
+                      {nBaja > 0 && <span className="text-emerald-700">▼€{Math.abs(impactoBaja).toFixed(2)}</span>}
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex gap-1 shrink-0">
                   <button onClick={() => setFacturaAbierta(f)}
                           className="text-[10px] font-bold bg-amber-500 text-stone-900 px-2 py-1 border border-stone-900 hover:bg-amber-400">
@@ -5229,7 +5296,8 @@ function PestañaFacturas({ api, pin }) {
                   </button>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
