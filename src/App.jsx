@@ -5739,16 +5739,16 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
               {/* Filtros clickables */}
               <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-1.5 text-center">
                 {[
-                  { key: "todo",       label: "TODO",       val: lineas.length,  extra: null, active: "bg-stone-900 text-amber-400",       inactive: "bg-stone-100 text-stone-700 hover:bg-stone-200" },
-                  { key: "pendiente",  label: "PENDIENTES", val: pendientes,     extra: null, active: "bg-amber-500 text-white",           inactive: "bg-amber-50 text-amber-800 hover:bg-amber-100"  },
-                  { key: "revisar",    label: "⚠️ REVISAR", val: revisar,        extra: null, active: "bg-orange-600 text-white",          inactive: "bg-orange-50 text-orange-800 hover:bg-orange-100" },
-                  { key: "confirmado", label: "CONFIRM.",   val: confirmadas,    extra: null, active: "bg-emerald-600 text-white",         inactive: "bg-emerald-50 text-emerald-800 hover:bg-emerald-100" },
-                  { key: "nuevo",      label: "NUEVAS",     val: nuevas,         extra: null, active: "bg-blue-600 text-white",            inactive: "bg-blue-50 text-blue-800 hover:bg-blue-100"    },
-                  { key: "ignorado",   label: "IGNORADAS",  val: ignoradas,      extra: null, active: "bg-stone-700 text-white",           inactive: "bg-stone-100 text-stone-600 hover:bg-stone-200"  },
-                  { key: "sube",       label: "▲ SUBEN",    val: subidas,        extra: subidas > 0 ? { tot: `+€${impactoSube.toFixed(2)}`,  unit: `+€${diffSubeUnit.toFixed(3)}/ud` } : null, active: "bg-red-600 text-white",   inactive: "bg-red-50 text-red-800 hover:bg-red-100"       },
-                  { key: "baja",       label: "▼ BAJAN",    val: bajadas,        extra: bajadas > 0 ? { tot: `€${impactoBaja.toFixed(2)}`,   unit: `€${diffBajaUnit.toFixed(3)}/ud` }  : null, active: "bg-green-600 text-white", inactive: "bg-green-50 text-green-800 hover:bg-green-100" },
+                  { key: "todo",       label: "TODO",         val: lineas.length,  extra: null, tooltip: "Mostrar todas las líneas",                            active: "bg-stone-900 text-amber-400",       inactive: "bg-stone-100 text-stone-700 hover:bg-stone-200" },
+                  { key: "pendiente",  label: "POR DECIDIR",  val: pendientes,     extra: null, tooltip: "Líneas que requieren tu decisión (la IA no está segura)", active: "bg-amber-500 text-white",       inactive: "bg-amber-50 text-amber-800 hover:bg-amber-100"  },
+                  { key: "revisar",    label: "⚠️ REVISAR",   val: revisar,        extra: null, tooltip: "Match correcto pero subida de precio sospechosa (>50%)", active: "bg-orange-600 text-white",       inactive: "bg-orange-50 text-orange-800 hover:bg-orange-100" },
+                  { key: "confirmado", label: "ACTUALIZAR",   val: confirmadas,    extra: null, tooltip: "Líneas que actualizarán el precio del producto en el catálogo", active: "bg-emerald-600 text-white", inactive: "bg-emerald-50 text-emerald-800 hover:bg-emerald-100" },
+                  { key: "nuevo",      label: "AÑADIR",       val: nuevas,         extra: null, tooltip: "Productos nuevos que se crearán en el catálogo",       active: "bg-blue-600 text-white",            inactive: "bg-blue-50 text-blue-800 hover:bg-blue-100"    },
+                  { key: "ignorado",   label: "NO APLICAR",   val: ignoradas,      extra: null, tooltip: "Líneas que se saltarán (no se aplicarán al catálogo)", active: "bg-stone-700 text-white",        inactive: "bg-stone-100 text-stone-600 hover:bg-stone-200"  },
+                  { key: "sube",       label: "▲ SUBEN",      val: subidas,        extra: subidas > 0 ? { tot: `+€${impactoSube.toFixed(2)}`,  unit: `+€${diffSubeUnit.toFixed(3)}/ud` } : null, tooltip: "Líneas con precio mayor que el catálogo actual",   active: "bg-red-600 text-white",   inactive: "bg-red-50 text-red-800 hover:bg-red-100"       },
+                  { key: "baja",       label: "▼ BAJAN",      val: bajadas,        extra: bajadas > 0 ? { tot: `€${impactoBaja.toFixed(2)}`,   unit: `€${diffBajaUnit.toFixed(3)}/ud` }  : null, tooltip: "Líneas con precio menor que el catálogo actual",   active: "bg-green-600 text-white", inactive: "bg-green-50 text-green-800 hover:bg-green-100" },
                 ].map(s => (
-                  <button key={s.key} onClick={() => setFiltro(f => f === s.key ? "todo" : s.key)}
+                  <button key={s.key} title={s.tooltip} onClick={() => setFiltro(f => f === s.key ? "todo" : s.key)}
                     className={`p-2 border-2 border-stone-900 transition-all ${filtro === s.key ? s.active : s.inactive}`}>
                     <div className="font-black text-xl leading-none">{s.val}</div>
                     <div className="text-[9px] font-bold tracking-widest mt-0.5">{s.label}</div>
@@ -5785,19 +5785,22 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
 
               {/* Acciones masivas sobre filtro activo */}
               {filtro !== "todo" && lineasFiltradas.length > 0 && (
-                <div className="flex gap-2 items-center bg-stone-50 border-2 border-stone-900 p-2">
+                <div className="flex gap-2 items-center bg-stone-50 border-2 border-stone-900 p-2 flex-wrap">
                   <span className="text-[10px] font-bold text-stone-600 flex-1">
                     {lineasFiltradas.length} líneas filtradas — acción masiva:
                   </span>
                   <button onClick={() => accionMasiva("confirmado")}
+                    title="Marca todas las líneas filtradas para actualizar precio"
                     className="px-2 py-1 text-[10px] font-bold bg-emerald-600 text-white border border-stone-900 hover:bg-emerald-700">
-                    ✓ CONFIRMAR TODAS
+                    ✓ ACTUALIZAR TODAS
                   </button>
                   <button onClick={() => accionMasiva("ignorado")}
+                    title="Marca todas las líneas filtradas para no aplicarlas al catálogo"
                     className="px-2 py-1 text-[10px] font-bold bg-red-600 text-white border border-stone-900 hover:bg-red-700">
-                    ✕ IGNORAR TODAS
+                    ✕ NO APLICAR NINGUNA
                   </button>
                   <button onClick={() => accionMasiva("pendiente")}
+                    title="Vuelve a poner todas las líneas filtradas en estado por decidir"
                     className="px-2 py-1 text-[10px] font-bold bg-stone-200 text-stone-900 border border-stone-900 hover:bg-stone-300">
                     ↺ RESETEAR
                   </button>
@@ -5878,17 +5881,19 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
                       {/* Botones de acción */}
                       <div className="flex gap-1 flex-wrap">
                         {[
-                          { key: "confirmado", label: "✓ CONFIRMAR" },
-                          { key: "nuevo",      label: "+ CREAR NUEVO" },
-                          { key: "ignorado",   label: "✕ IGNORAR" },
+                          { key: "confirmado", label: "✓ ACTUALIZAR PRECIO",   tooltip: "Es este producto. Sustituye el precio del catálogo por el de la factura." },
+                          { key: "nuevo",      label: "+ AÑADIR AL CATÁLOGO",  tooltip: "Este producto no existe todavía. Crea un producto nuevo con los datos de la factura." },
+                          { key: "ignorado",   label: "✕ NO APLICAR",          tooltip: "Salta esta línea. No toca el catálogo y no aprende equivalencia." },
                         ].map(btn => (
                           <button key={btn.key}
+                            title={btn.tooltip}
                             onClick={() => updateLinea(linea.idx, { estado: btn.key })}
                             className={`px-2 py-1 text-[10px] font-bold border ${estadoBtn(linea, btn.key)}`}>
                             {btn.label}
                           </button>
                         ))}
                         <button
+                          title="El producto sugerido por la IA está mal. Abre un buscador para elegir el correcto de tu catálogo."
                           onClick={() => { setCambioIdx(cambioIdx === linea.idx ? null : linea.idx); setBusquedaCambio(""); }}
                           className={`px-2 py-1 text-[10px] font-bold border ${cambioIdx === linea.idx ? "bg-violet-600 text-white border-stone-900" : "bg-white text-stone-700 border-stone-300 hover:border-violet-600 hover:text-violet-700"}`}>
                           🔍 CAMBIAR PRODUCTO
