@@ -5927,8 +5927,9 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
     doc.setTextColor(0); y += 6;
 
     // ═══ BLOQUE 1: RESUMEN EJECUTIVO ═══
-    doc.setFillColor(245, 240, 230); doc.rect(ML, y, W, 38, "F");
-    doc.setDrawColor(0); doc.setLineWidth(0.5); doc.rect(ML, y, W, 38);
+    const ALTO_RESUMEN = 44; // antes 38, agrandado para que quepa el mensaje destacado dentro
+    doc.setFillColor(245, 240, 230); doc.rect(ML, y, W, ALTO_RESUMEN, "F");
+    doc.setDrawColor(0); doc.setLineWidth(0.5); doc.rect(ML, y, W, ALTO_RESUMEN);
     y += 5;
     doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(80);
     doc.text("RESUMEN EJECUTIVO", ML + 3, y); y += 5;
@@ -5957,18 +5958,21 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
     doc.text(`Concentración del impacto:`, c1, y);
     doc.setFont("helvetica", "bold");
     doc.text(`Top ${top.length} productos = ${pctConcentracion.toFixed(0)}% del sobrecoste total`, c2, y);
-    doc.setFont("helvetica", "normal"); y += 7;
+    doc.setFont("helvetica", "normal"); y += 6;
 
-    // Mensaje destacado
-    doc.setFillColor(255, 230, 200); doc.setDrawColor(180, 100, 0); doc.setLineWidth(0.4);
+    // Mensaje destacado (DENTRO del cuadro del resumen, no fuera)
+    doc.setFillColor(255, 230, 200); doc.setDrawColor(180, 100, 0); doc.setLineWidth(0.3);
     const msg = totalImpacto > 0
       ? `Las facturas analizadas reflejan un sobrecoste de EUR ${totalImpacto.toFixed(2)} respecto a los precios pactados.`
       : `Las facturas analizadas reflejan un ahorro de EUR ${Math.abs(totalImpacto).toFixed(2)}.`;
-    doc.rect(ML + 3, y - 3, W - 6, 6, "FD");
-    doc.setFont("helvetica", "italic"); doc.setFontSize(8); doc.setTextColor(60);
-    doc.text(msg, ML + 5, y + 1);
+    doc.rect(ML + 3, y - 2, W - 6, 6, "FD");
+    doc.setFont("helvetica", "italic"); doc.setFontSize(7.5); doc.setTextColor(60);
+    doc.text(msg, ML + 5, y + 2);
     doc.setTextColor(0); doc.setFont("helvetica", "normal");
-    y += 10;
+    y += 8; // dentro del cuadro principal todavía
+
+    // Salir del cuadro del resumen
+    y += 4;
 
     // ═══ BLOQUE 2: TOP DESVIACIONES ═══
     if (top.length > 0) {
@@ -6223,7 +6227,7 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
         doc.text("P. facturado",  sc.pnue,  y, { align: "right" });
         doc.text("Dif/u",         sc.dif,   y, { align: "right" });
         doc.text("Sobrecoste",    sc.sobre, y, { align: "right" });
-        y += 3;
+        y += 4.5; // antes 3 — espacio suficiente para que la primera fila no pise la cabecera
         doc.setTextColor(0); doc.setFont("helvetica", "normal"); doc.setFontSize(6.8);
 
         // Líneas ordenadas por fecha — TODAS, sin truncar
@@ -6246,7 +6250,7 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
             doc.text("P. facturado",  sc.pnue,  y, { align: "right" });
             doc.text("Dif/u",         sc.dif,   y, { align: "right" });
             doc.text("Sobrecoste",    sc.sobre, y, { align: "right" });
-            y += 3;
+            y += 4.5; // antes 3
             doc.setTextColor(0); doc.setFont("helvetica", "normal"); doc.setFontSize(6.8);
           }
           const fechaTxt = a.fecha ? new Date(a.fecha).toLocaleDateString("es-ES") : "—";
