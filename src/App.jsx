@@ -5920,9 +5920,14 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
                         </div>
                         <div className="font-bold text-sm">{linea.lineaOriginal.descripcion_original}</div>
                         <div className="text-[10px] text-stone-600">
-                          {linea.lineaOriginal.cantidad} {linea.lineaOriginal.unidad} ×
-                          €{linea.lineaOriginal.precio_unitario?.toFixed(3)} =
-                          <span className="font-bold"> €{linea.lineaOriginal.importe_linea?.toFixed(2)}</span>
+                          {linea.lineaOriginal.cantidad} {linea.lineaOriginal.unidad} × €{linea.lineaOriginal.precio_unitario?.toFixed(3)}
+                        </div>
+                      </div>
+                      {/* Importe de la línea destacado */}
+                      <div className="shrink-0 text-right">
+                        <div className="text-[8px] font-bold tracking-widest text-stone-500">IMPORTE</div>
+                        <div className="text-lg font-black font-mono text-stone-900 leading-none">
+                          €{(parseFloat(linea.lineaOriginal.importe_linea) || 0).toFixed(2)}
                         </div>
                       </div>
                     </div>
