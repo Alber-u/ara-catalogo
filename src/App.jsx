@@ -5266,6 +5266,111 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
     finally { setConfirmando(false); }
   };
 
+  const handleInformePDF = async () => {
+    let jsPDFmod;
+    try { jsPDFmod = await import("jspdf"); } catch(e) { alert("No se pudo cargar PDF"); return; }
+    const { jsPDF } = jsPDFmod;
+    const doc = new jsPDF({ unit: "mm", format: "a4" });
+    let y = 15;
+
+    const subidas = lineas.filter(l => l.variacionPrecio?.sube && l.estado !== "ignorado");
+    const bajadas = lineas.filter(l => l.variacionPrecio?.baja && l.estado !== "ignorado");
+
+    if (subidas.length === 0 && bajadas.length === 0) {
+      alert("No hay variaciones de precio para reportar.");
+      return;
+    }
+
+    // Cabecera
+    doc.setFont("helvetica", "bold"); doc.setFontSize(16);
+    doc.text("INFORME DE VARIACION DE PRECIOS", 105, y, { align: "center" }); y += 6;
+    doc.setFontSize(9); doc.setFont("helvetica", "normal");
+    doc.text("ARA Corporate Sociedad de Inversiones, SL · CIF B90488222", 105, y, { align: "center" }); y += 4;
+    doc.text("Avd San Francisco Javier 9 PL6 MOD 9, 41018 Sevilla", 105, y, { align: "center" }); y += 8;
+    doc.setDrawColor(0); doc.setLineWidth(0.5); doc.line(15, y, 195, y); y += 6;
+
+    // Datos factura
+    doc.setFont("helvetica", "bold"); doc.setFontSize(10);
+    doc.text("DATOS DE LA FACTURA", 15, y); y += 5;
+    doc.setFont("helvetica", "normal"); doc.setFontSize(9);
+    doc.text(`Proveedor:       ${factura.datosExtraidos?.proveedor || "-"}`, 15, y); y += 4;
+    doc.text(`Numero factura:  ${factura.datosExtraidos?.numero_factura || "-"}`, 15, y); y += 4;
+    doc.text(`Fecha factura:   ${factura.datosExtraidos?.fecha || "-"}`, 15, y); y += 4;
+    doc.text(`Fecha informe:   ${new Date().toLocaleDateString("es-ES", { dateStyle: "long" })}`, 15, y); y += 8;
+    doc.setDrawColor(180); doc.setLineWidth(0.3); doc.line(15, y, 195, y); y += 6;
+
+    const pintarTabla = (titulo, items, colorR, colorG, colorB) => {
+      if (items.length === 0) return;
+      if (y > 230) { doc.addPage(); y = 20; }
+      doc.setFont("helvetica", "bold"); doc.setFontSize(11);
+      doc.setTextColor(colorR, colorG, colorB);
+      doc.text(titulo + ` (${items.length} productos)`, 15, y); y += 5;
+      doc.setTextColor(0, 0, 0);
+
+      // Cabecera tabla
+      doc.setFillColor(240, 240, 240);
+      doc.rect(15, y - 4, 180, 6, "F");
+      doc.setFont("helvetica", "bold"); doc.setFontSize(7.5);
+      doc.text("Ref", 17, y);
+      doc.text("Descripcion", 35, y);
+      doc.text("Precio anterior", 115, y, { align: "right" });
+      doc.text("Precio nuevo", 145, y, { align: "right" });
+      doc.text("Diferencia", 170, y, { align: "right" });
+      doc.text("% Var.", 192, y, { align: "right" });
+      y += 4;
+
+      doc.setFont("helvetica", "normal"); doc.setFontSize(8);
+      let totalDiff = 0;
+      items.forEach(l => {
+        if (y > 270) { doc.addPage(); y = 20; }
+        const ref = l.lineaOriginal?.referencia_proveedor || "-";
+        const desc = (l.lineaOriginal?.descripcion_original || "").length > 45
+          ? l.lineaOriginal.descripcion_original.substring(0, 43) + ".."
+          : (l.lineaOriginal?.descripcion_original || "");
+        const actual = l.precioActual || 0;
+        const nuevo = l.precioUnitarioNeto || 0;
+        const diff = nuevo - actual;
+        const pct = l.variacionPrecio?.pct || 0;
+        totalDiff += diff;
+
+        doc.text(ref, 17, y);
+        doc.text(desc, 35, y);
+        doc.text("EUR" + actual.toFixed(4), 115, y, { align: "right" });
+        doc.text("EUR" + nuevo.toFixed(4), 145, y, { align: "right" });
+        doc.setTextColor(colorR, colorG, colorB);
+        doc.text((diff >= 0 ? "+" : "") + "EUR" + diff.toFixed(4), 170, y, { align: "right" });
+        doc.text((pct >= 0 ? "+" : "") + pct + "%", 192, y, { align: "right" });
+        doc.setTextColor(0, 0, 0);
+        y += 4;
+      });
+
+      // Total impacto
+      y += 2; doc.setLineWidth(0.3); doc.line(100, y, 195, y); y += 4;
+      doc.setFont("helvetica", "bold");
+      doc.text("Impacto total por unidad:", 105, y);
+      doc.setTextColor(colorR, colorG, colorB);
+      doc.text((totalDiff >= 0 ? "+" : "") + "EUR" + totalDiff.toFixed(4), 192, y, { align: "right" });
+      doc.setTextColor(0, 0, 0);
+      y += 8;
+    };
+
+    // Subidas en rojo
+    pintarTabla("PRODUCTOS CON SUBIDA DE PRECIO", subidas, 180, 0, 0);
+
+    // Bajadas en verde
+    pintarTabla("PRODUCTOS CON BAJADA DE PRECIO", bajadas, 0, 120, 0);
+
+    // Nota final
+    if (y > 250) { doc.addPage(); y = 20; }
+    doc.setFont("helvetica", "italic"); doc.setFontSize(8); doc.setTextColor(100);
+    doc.text("Este informe ha sido generado automaticamente desde el sistema de gestion de pedidos ARA Corporate.", 15, y); y += 4;
+    doc.text("Los precios anteriores corresponden a los registrados en el catalogo interno en el momento de la importacion.", 15, y);
+    doc.setTextColor(0);
+
+    const fname = `Informe_Variacion_${(factura.datosExtraidos?.proveedor || "proveedor").replace(/[^a-z0-9]/gi,"_")}_${factura.datosExtraidos?.numero_factura || factura.id}.pdf`;
+    doc.save(fname);
+  };
+
   const confianzaColor = (c) => c >= 90 ? "text-emerald-700 font-bold" : c >= 70 ? "text-amber-700 font-bold" : "text-red-700 font-bold";
   const estadoBtn = (linea, estado) => linea.estado === estado
     ? "bg-stone-900 text-amber-400 border-stone-900"
@@ -5517,6 +5622,15 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
               </div>
 
               {/* Botón confirmar todo */}
+              {/* Botón informe variación precios */}
+              {lineas.some(l => l.variacionPrecio && (l.variacionPrecio.sube || l.variacionPrecio.baja)) && (
+                <button onClick={handleInformePDF}
+                        className="w-full p-3 font-black text-sm tracking-widest border-2 border-stone-900 bg-stone-100 text-stone-900 hover:bg-stone-200"
+                        style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+                  📊 INFORME DE VARIACIÓN DE PRECIOS (PDF)
+                </button>
+              )}
+
               {factura.estado === "pendiente_revision" && (
                 <button onClick={handleConfirmar} disabled={confirmando}
                         className={`w-full p-4 font-black text-sm tracking-widest border-2 border-stone-900 ${confirmando ? "bg-stone-300 cursor-wait" : "bg-emerald-700 text-white hover:bg-emerald-800"}`}
