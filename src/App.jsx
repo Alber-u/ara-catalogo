@@ -5317,7 +5317,7 @@ function PestañaFacturas({ api, pin }) {
               </span>
             );
           })()}
-          {facturasFiltradas.some(f => (f.lineasRevision || []).some(l => l.variacionPrecio)) && (
+          {facturasFiltradas.some(f => (f.lineasRevision || []).length > 0) && (
             <button
               onClick={() => setMostrarAnalisis(true)}
               title="Análisis transversal: ve qué productos te están subiendo en TODAS las facturas"
@@ -5727,11 +5727,12 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
   const numRectificativas = facturas.length - facturasUsables.length;
 
   // Agregar líneas por productoSugerido (id del catálogo) o por descripción si no hay match
+  // IMPORTANTE: incluimos TODAS las líneas, no solo las que tienen variacionPrecio,
+  // para que productos nuevos y otras líneas también aparezcan en el análisis.
   const agregado = useMemo(() => {
     const mapa = new Map(); // key → { id, desc, ref, apariciones: [] }
     facturasUsables.forEach(f => {
       (f.lineasRevision || []).forEach(l => {
-        if (!l.variacionPrecio) return;
         // Clave de agregación: id del producto del catálogo si existe, si no la referencia del proveedor
         const key = l.productoSugerido || `ref:${l.lineaOriginal?.referencia_proveedor || ""}|desc:${(l.lineaOriginal?.descripcion_original || "").substring(0, 40)}`;
         if (!mapa.has(key)) {
@@ -5747,7 +5748,8 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
           });
         }
         const cant = parseFloat(l.lineaOriginal?.cantidad) || 0;
-        const impacto = (l.variacionPrecio.diff || 0) * cant;
+        const tieneVar = !!l.variacionPrecio;
+        const impacto = tieneVar ? (l.variacionPrecio.diff || 0) * cant : 0;
         mapa.get(key).apariciones.push({
           facturaId: f.id,
           facturaNombre: f.archivoOriginal,
@@ -5757,23 +5759,27 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
           cantidad: cant,
           precioActual: l.precioActual,
           precioFactura: l.precioUnitarioNeto,
-          diff: l.variacionPrecio.diff,
-          pct: l.variacionPrecio.pct,
-          sube: l.variacionPrecio.sube,
-          baja: l.variacionPrecio.baja,
+          diff: tieneVar ? l.variacionPrecio.diff : null,
+          pct: tieneVar ? l.variacionPrecio.pct : null,
+          sube: tieneVar ? l.variacionPrecio.sube : false,
+          baja: tieneVar ? l.variacionPrecio.baja : false,
           impacto,
-          estado: l.estado
+          estado: l.estado,
+          tieneVariacion: tieneVar
         });
       });
     });
     // Calcular agregados por producto
     const lista = Array.from(mapa.values()).map(p => {
       const aps = p.apariciones;
+      const apsConVar = aps.filter(a => a.tieneVariacion);
       const impactoTotal = aps.reduce((acc, a) => acc + a.impacto, 0);
       const subidas = aps.filter(a => a.sube).length;
       const bajadas = aps.filter(a => a.baja).length;
       const cantTotal = aps.reduce((acc, a) => acc + a.cantidad, 0);
-      const diffPromedio = aps.reduce((acc, a) => acc + a.diff, 0) / aps.length;
+      const diffPromedio = apsConVar.length > 0
+        ? apsConVar.reduce((acc, a) => acc + (a.diff || 0), 0) / apsConVar.length
+        : 0;
 
       // % ponderado REAL: sobrecoste / lo que hubiera gastado al precio antiguo
       // (mucho más fiable que la media aritmética de % cuando hay outliers)
@@ -5791,10 +5797,33 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
         : null;
 
       // Conservamos pctPromedio aritmético para compat (se usa en algún sitio), pero el bueno es pctPonderado
-      const pctPromedio = aps.reduce((acc, a) => acc + a.pct, 0) / aps.length;
-      const precioMin = Math.min(...aps.map(a => a.precioFactura));
-      const precioMax = Math.max(...aps.map(a => a.precioFactura));
-      return { ...p, impactoTotal, subidas, bajadas, cantTotal, diffPromedio, pctPromedio, pctPonderado, precioAntesMedio, precioNuevoMedio, precioMin, precioMax };
+      const pctPromedio = apsConVar.length > 0
+        ? apsConVar.reduce((acc, a) => acc + (a.pct || 0), 0) / apsConVar.length
+        : 0;
+      const precioMin = aps.length > 0 ? Math.min(...aps.map(a => a.precioFactura)) : 0;
+      const precioMax = aps.length > 0 ? Math.max(...aps.map(a => a.precioFactura)) : 0;
+
+      // Contadores por estado de las apariciones
+      const estadoCount = { confirmado: 0, nuevo: 0, revisar: 0, pendiente: 0, ignorado: 0 };
+      aps.forEach(a => {
+        if (estadoCount[a.estado] !== undefined) estadoCount[a.estado]++;
+      });
+      // Estado dominante: el más frecuente. Si hay nuevos o pendientes mezclados con
+      // confirmados, priorizamos los que requieren atención.
+      let estadoDominante;
+      if (estadoCount.revisar > 0)         estadoDominante = "revisar";
+      else if (estadoCount.pendiente > 0)  estadoDominante = "pendiente";
+      else if (estadoCount.nuevo > 0)      estadoDominante = "nuevo";
+      else if (estadoCount.confirmado > 0) estadoDominante = "confirmado";
+      else                                  estadoDominante = "ignorado";
+
+      return {
+        ...p, impactoTotal, subidas, bajadas, cantTotal,
+        diffPromedio, pctPromedio, pctPonderado,
+        precioAntesMedio, precioNuevoMedio, precioMin, precioMax,
+        estadoCount, estadoDominante,
+        tieneVariacionAlguna: apsConVar.length > 0
+      };
     });
     return lista;
   }, [facturasUsables]);
@@ -5807,6 +5836,8 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
         if (filtroDireccion === "sube" && p.impactoTotal <= 0.01) return false;
         if (filtroDireccion === "baja" && p.impactoTotal >= -0.01) return false;
         if (filtroDireccion === "sospechoso" && Math.abs(p.pctPonderado) <= 100) return false;
+        if (filtroDireccion === "nuevo" && (p.estadoCount.nuevo || 0) === 0) return false;
+        if (filtroDireccion === "pendiente" && (p.estadoCount.pendiente || 0) + (p.estadoCount.revisar || 0) === 0) return false;
         if (q) {
           const enDesc = (p.descCat || p.descFact).toLowerCase().includes(q);
           const enRef = p.ref.toLowerCase().includes(q);
@@ -5822,8 +5853,10 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
       });
   }, [agregado, orden, filtroDireccion, busquedaProd]);
 
-  // Contador de sospechosos (siempre disponible para el chip)
+  // Contadores para los chips
   const sospechosos = agregado.filter(p => Math.abs(p.pctPonderado) > 100).length;
+  const nuevos = agregado.filter(p => (p.estadoCount.nuevo || 0) > 0).length;
+  const pendientes = agregado.filter(p => (p.estadoCount.pendiente || 0) + (p.estadoCount.revisar || 0) > 0).length;
 
   // Totales agregados
   const totalImpacto    = lista.reduce((acc, p) => acc + p.impactoTotal, 0);
@@ -6489,6 +6522,22 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
                 🚨 Sospechosos ({sospechosos})
               </button>
             )}
+            {nuevos > 0 && (
+              <button
+                onClick={() => setFiltroDireccion(filtroDireccion === "nuevo" ? "todos" : "nuevo")}
+                title="Productos NUEVOS detectados que se crearán al aplicar las facturas. Revísalos antes de aplicar."
+                className={`px-2 py-1 text-[10px] font-bold border ${filtroDireccion === "nuevo" ? "bg-blue-700 text-white border-blue-900" : "bg-blue-50 text-blue-700 border-blue-400 hover:bg-blue-100"}`}>
+                🆕 Nuevos ({nuevos})
+              </button>
+            )}
+            {pendientes > 0 && (
+              <button
+                onClick={() => setFiltroDireccion(filtroDireccion === "pendiente" ? "todos" : "pendiente")}
+                title="Productos con líneas pendientes de decidir o marcadas como 'revisar'. Tienes que decidir qué hacer con ellas."
+                className={`px-2 py-1 text-[10px] font-bold border ${filtroDireccion === "pendiente" ? "bg-amber-600 text-white border-amber-800" : "bg-amber-50 text-amber-800 border-amber-400 hover:bg-amber-100"}`}>
+                ⏳ Pendientes ({pendientes})
+              </button>
+            )}
             <span className="text-[9px] font-bold tracking-widest text-stone-600 ml-2">ORDENAR:</span>
             {[
               { key: "impacto",    label: "Impacto €" },
@@ -6508,6 +6557,16 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
               <b>🚨 Mostrando productos con variación &gt; 100%.</b> Estos suelen ser matches incorrectos de la IA (cuando se confunde un producto con otro distinto). Revisa cada línea: usa <b>🔍 CAMBIAR PRODUCTO</b> para reasignar al producto correcto, o <b>✕ NO APLICAR</b> si la línea está mal extraída. Limpiar estos antes de exportar el PDF al proveedor da credibilidad al informe.
             </div>
           )}
+          {filtroDireccion === "nuevo" && (
+            <div className="bg-blue-50 border-2 border-blue-700 p-2 text-[11px] text-blue-900">
+              <b>🆕 Mostrando productos NUEVOS detectados.</b> Son los que aún no existen en tu catálogo. Despliega cada fila con <b>▶</b> para ver en qué facturas aparece. Si quieres revisar cada uno antes de crearlo, abre la factura con [IR] y decide ahí. Si ves muchas apariciones del mismo producto, basta con que entres a UNA factura — la equivalencia se aprende automáticamente.
+            </div>
+          )}
+          {filtroDireccion === "pendiente" && (
+            <div className="bg-amber-50 border-2 border-amber-700 p-2 text-[11px] text-amber-900">
+              <b>⏳ Mostrando productos con líneas sin decidir.</b> Líneas marcadas como <i>pendiente</i> (la IA no se decidió) o <i>revisar</i> (subida de precio sospechosa). Tienes que ir a cada factura y decidir si actualizas precio, creas producto nuevo o ignoras. Si no decides, esas líneas se saltarán al aplicar la factura.
+            </div>
+          )}
 
           {/* Tabla de productos */}
           {lista.length === 0 ? (
@@ -6522,6 +6581,7 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
                     <th className="text-left p-2 w-10"></th>
                     <th className="text-left p-2">REF</th>
                     <th className="text-left p-2">PRODUCTO</th>
+                    <th className="text-center p-2 whitespace-nowrap">ESTADO</th>
                     <th className="text-right p-2 whitespace-nowrap">VECES</th>
                     <th className="text-right p-2 whitespace-nowrap">% REAL</th>
                     <th className="text-right p-2 whitespace-nowrap">DIF/U PROM</th>
@@ -6532,6 +6592,20 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
                 <tbody>
                   {lista.map(p => {
                     const expandido = productoExpandido === p.key;
+                    // Configuración visual del estado dominante
+                    const estadoConfig = {
+                      confirmado: { label: "✅ OK",        color: "bg-emerald-100 text-emerald-800" },
+                      nuevo:      { label: "🆕 Nuevo",     color: "bg-blue-100 text-blue-800" },
+                      revisar:    { label: "⚠️ Revisar",   color: "bg-orange-100 text-orange-800" },
+                      pendiente:  { label: "⏳ Pendiente", color: "bg-amber-100 text-amber-800" },
+                      ignorado:   { label: "✕ Ignorado",   color: "bg-stone-200 text-stone-700" },
+                    };
+                    const ec = estadoConfig[p.estadoDominante] || estadoConfig.confirmado;
+                    // Si hay mezcla de estados (ej. mayoría confirmado + alguno pendiente), avisamos con un *
+                    const tieneMezcla = Object.values(p.estadoCount).filter(n => n > 0).length > 1;
+                    const tooltipMezcla = tieneMezcla
+                      ? `Mezcla: ${Object.entries(p.estadoCount).filter(([k,v]) => v > 0).map(([k,v]) => `${v} ${k}`).join(" · ")}`
+                      : "";
                     return (
                       <React.Fragment key={p.key}>
                         <tr
@@ -6540,21 +6614,35 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
                           <td className="p-2 text-center text-stone-500">{expandido ? "▼" : "▶"}</td>
                           <td className="p-2 font-mono text-[10px]">{p.ref || "—"}</td>
                           <td className="p-2 font-bold">{p.descCat || p.descFact}</td>
+                          <td className="p-2 text-center">
+                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-sm whitespace-nowrap ${ec.color}`} title={tooltipMezcla}>
+                              {ec.label}{tieneMezcla ? "*" : ""}
+                            </span>
+                          </td>
                           <td className="p-2 text-right font-mono">{p.apariciones.length}</td>
-                          <td className={`p-2 text-right font-mono font-bold ${p.pctPonderado > 0 ? "text-red-700" : p.pctPonderado < 0 ? "text-emerald-700" : ""}`}>
-                            {p.pctPonderado >= 0 ? "+" : ""}{p.pctPonderado.toFixed(1)}%
-                          </td>
-                          <td className={`p-2 text-right font-mono ${p.diffPromedio > 0 ? "text-red-700" : p.diffPromedio < 0 ? "text-emerald-700" : ""}`}>
-                            {p.diffPromedio >= 0 ? "+" : ""}€{p.diffPromedio.toFixed(3)}
-                          </td>
+                          {p.tieneVariacionAlguna ? (
+                            <>
+                              <td className={`p-2 text-right font-mono font-bold ${p.pctPonderado > 0 ? "text-red-700" : p.pctPonderado < 0 ? "text-emerald-700" : ""}`}>
+                                {p.pctPonderado >= 0 ? "+" : ""}{p.pctPonderado.toFixed(1)}%
+                              </td>
+                              <td className={`p-2 text-right font-mono ${p.diffPromedio > 0 ? "text-red-700" : p.diffPromedio < 0 ? "text-emerald-700" : ""}`}>
+                                {p.diffPromedio >= 0 ? "+" : ""}€{p.diffPromedio.toFixed(3)}
+                              </td>
+                            </>
+                          ) : (
+                            <>
+                              <td className="p-2 text-right font-mono text-stone-400">—</td>
+                              <td className="p-2 text-right font-mono text-stone-400">—</td>
+                            </>
+                          )}
                           <td className="p-2 text-right font-mono">{p.cantTotal.toFixed(0)} {p.unidad}</td>
-                          <td className={`p-2 text-right font-mono font-black ${p.impactoTotal > 0.01 ? "text-red-700" : p.impactoTotal < -0.01 ? "text-emerald-700" : ""}`}>
-                            {p.impactoTotal >= 0 ? "+" : ""}€{p.impactoTotal.toFixed(2)}
+                          <td className={`p-2 text-right font-mono font-black ${p.impactoTotal > 0.01 ? "text-red-700" : p.impactoTotal < -0.01 ? "text-emerald-700" : "text-stone-400"}`}>
+                            {Math.abs(p.impactoTotal) < 0.01 ? "—" : `${p.impactoTotal >= 0 ? "+" : ""}€${p.impactoTotal.toFixed(2)}`}
                           </td>
                         </tr>
                         {expandido && (
                           <tr className="bg-stone-50 border-t border-stone-200">
-                            <td colSpan={8} className="p-2">
+                            <td colSpan={9} className="p-2">
                               <div className="text-[10px] font-bold tracking-widest text-stone-600 mb-1">
                                 APARICIONES ({p.apariciones.length}) · precio min €{p.precioMin.toFixed(4)} · max €{p.precioMax.toFixed(4)}
                               </div>
@@ -6564,6 +6652,7 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
                                     <tr>
                                       <th className="text-left p-1">FECHA</th>
                                       <th className="text-left p-1">FACTURA</th>
+                                      <th className="text-center p-1">ESTADO</th>
                                       <th className="text-right p-1">CANT</th>
                                       <th className="text-right p-1">PRECIO ANTES</th>
                                       <th className="text-right p-1">PRECIO FACT</th>
@@ -6576,21 +6665,44 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
                                   <tbody>
                                     {p.apariciones.slice().sort((a, b) => (a.fecha || "").localeCompare(b.fecha || "")).map((a, i) => {
                                       const fact = facturas.find(f => f.id === a.facturaId);
+                                      // Badge de estado por aparición
+                                      const estadoLineaConfig = {
+                                        confirmado: { label: "✅",   color: "bg-emerald-100 text-emerald-800", title: "Confirmado: se actualizará el precio del catálogo" },
+                                        nuevo:      { label: "🆕",   color: "bg-blue-100 text-blue-800",       title: "Nuevo: se creará en el catálogo" },
+                                        revisar:    { label: "⚠️",   color: "bg-orange-100 text-orange-800",   title: "Revisar: subida sospechosa, decide manualmente" },
+                                        pendiente:  { label: "⏳",   color: "bg-amber-100 text-amber-800",     title: "Pendiente: la IA no está segura, decide manualmente" },
+                                        ignorado:   { label: "✕",    color: "bg-stone-200 text-stone-700",     title: "Ignorado: no toca el catálogo" },
+                                      };
+                                      const elc = estadoLineaConfig[a.estado] || estadoLineaConfig.confirmado;
                                       return (
                                         <tr key={i} className="border-t border-stone-200">
                                           <td className="p-1 font-mono">{a.fecha ? new Date(a.fecha).toLocaleDateString("es-ES") : "—"}</td>
                                           <td className="p-1 font-mono text-[10px]">{a.numFact || a.facturaNombre.substring(0, 30)}</td>
+                                          <td className="p-1 text-center">
+                                            <span className={`text-[10px] font-bold px-1 py-0.5 rounded-sm ${elc.color}`} title={elc.title}>
+                                              {elc.label}
+                                            </span>
+                                          </td>
                                           <td className="p-1 text-right font-mono">{a.cantidad}</td>
                                           <td className="p-1 text-right font-mono">{a.precioActual !== null ? `€${a.precioActual.toFixed(4)}` : "—"}</td>
                                           <td className="p-1 text-right font-mono font-bold">€{a.precioFactura.toFixed(4)}</td>
-                                          <td className={`p-1 text-right font-mono ${a.sube ? "text-red-700" : a.baja ? "text-emerald-700" : ""}`}>
-                                            {a.diff >= 0 ? "+" : ""}€{a.diff.toFixed(4)}
-                                          </td>
-                                          <td className={`p-1 text-right font-mono font-bold ${a.sube ? "text-red-700" : a.baja ? "text-emerald-700" : ""}`}>
-                                            {a.pct >= 0 ? "+" : ""}{a.pct.toFixed(1)}%
-                                          </td>
-                                          <td className={`p-1 text-right font-mono font-bold ${a.impacto > 0.01 ? "text-red-700" : a.impacto < -0.01 ? "text-emerald-700" : ""}`}>
-                                            {a.impacto >= 0 ? "+" : ""}€{a.impacto.toFixed(2)}
+                                          {a.tieneVariacion ? (
+                                            <>
+                                              <td className={`p-1 text-right font-mono ${a.sube ? "text-red-700" : a.baja ? "text-emerald-700" : ""}`}>
+                                                {a.diff >= 0 ? "+" : ""}€{a.diff.toFixed(4)}
+                                              </td>
+                                              <td className={`p-1 text-right font-mono font-bold ${a.sube ? "text-red-700" : a.baja ? "text-emerald-700" : ""}`}>
+                                                {a.pct >= 0 ? "+" : ""}{a.pct.toFixed(1)}%
+                                              </td>
+                                            </>
+                                          ) : (
+                                            <>
+                                              <td className="p-1 text-right text-stone-400">—</td>
+                                              <td className="p-1 text-right text-stone-400">—</td>
+                                            </>
+                                          )}
+                                          <td className={`p-1 text-right font-mono font-bold ${a.impacto > 0.01 ? "text-red-700" : a.impacto < -0.01 ? "text-emerald-700" : "text-stone-400"}`}>
+                                            {Math.abs(a.impacto) < 0.01 ? "—" : `${a.impacto >= 0 ? "+" : ""}€${a.impacto.toFixed(2)}`}
                                           </td>
                                           <td className="p-1 text-right">
                                             {fact && (
