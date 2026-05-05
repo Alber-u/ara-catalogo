@@ -5433,9 +5433,37 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
     : "bg-white text-stone-700 border-stone-300 hover:border-stone-900";
 
   const lineas = factura.lineasRevision || [];
-  const pendientes = lineas.filter(l => l.estado === "pendiente").length;
+  const [filtro, setFiltro] = useState("todo");
+  const pendientes  = lineas.filter(l => l.estado === "pendiente").length;
   const confirmadas = lineas.filter(l => l.estado === "confirmado").length;
-  const nuevas = lineas.filter(l => l.estado === "nuevo").length;
+  const nuevas      = lineas.filter(l => l.estado === "nuevo").length;
+  const ignoradas   = lineas.filter(l => l.estado === "ignorado").length;
+  const subidas     = lineas.filter(l => l.variacionPrecio?.sube).length;
+  const bajadas     = lineas.filter(l => l.variacionPrecio?.baja).length;
+
+  const lineasFiltradas = lineas.filter(l => {
+    if (filtro === "todo")       return true;
+    if (filtro === "pendiente")  return l.estado === "pendiente";
+    if (filtro === "confirmado") return l.estado === "confirmado";
+    if (filtro === "nuevo")      return l.estado === "nuevo";
+    if (filtro === "ignorado")   return l.estado === "ignorado";
+    if (filtro === "sube")       return l.variacionPrecio?.sube;
+    if (filtro === "baja")       return l.variacionPrecio?.baja;
+    return true;
+  });
+
+  // Accion masiva — aplica a las líneas filtradas
+  const accionMasiva = async (nuevoEstado) => {
+    const indices = lineasFiltradas.map(l => l.idx);
+    await Promise.all(indices.map(idx =>
+      fetch(`https://araujo-bot.onrender.com/api/facturas/linea/${factura.id}/${idx}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "x-admin-pin": pin },
+        body: JSON.stringify({ estado: nuevoEstado })
+      })
+    ));
+    recargar();
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
@@ -5543,25 +5571,49 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
           {/* Revisión */}
           {(factura.estado === "pendiente_revision" || factura.estado === "completado") && lineas.length > 0 && (
             <>
-              {/* Stats */}
-              <div className="grid grid-cols-4 gap-2 text-center">
+              {/* Filtros clickables */}
+              <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 text-center">
                 {[
-                  { label: "TOTAL", val: lineas.length, color: "bg-stone-900 text-amber-400" },
-                  { label: "PENDIENTES", val: pendientes, color: "bg-amber-100 text-amber-800" },
-                  { label: "CONFIRMADAS", val: confirmadas, color: "bg-emerald-100 text-emerald-800" },
-                  { label: "NUEVAS", val: nuevas, color: "bg-blue-100 text-blue-800" },
+                  { key: "todo",       label: "TODO",       val: lineas.length,  color: "bg-stone-900 text-amber-400",        active: "bg-stone-900 text-amber-400",       inactive: "bg-stone-100 text-stone-700 hover:bg-stone-200" },
+                  { key: "pendiente",  label: "PENDIENTES", val: pendientes,     color: "bg-amber-100 text-amber-800",         active: "bg-amber-500 text-white",           inactive: "bg-amber-50 text-amber-800 hover:bg-amber-100"  },
+                  { key: "confirmado", label: "CONFIRM.",   val: confirmadas,    color: "bg-emerald-100 text-emerald-800",     active: "bg-emerald-600 text-white",         inactive: "bg-emerald-50 text-emerald-800 hover:bg-emerald-100" },
+                  { key: "nuevo",      label: "NUEVAS",     val: nuevas,         color: "bg-blue-100 text-blue-800",           active: "bg-blue-600 text-white",            inactive: "bg-blue-50 text-blue-800 hover:bg-blue-100"    },
+                  { key: "sube",       label: "▲ SUBEN",    val: subidas,        color: "bg-red-100 text-red-800",             active: "bg-red-600 text-white",             inactive: "bg-red-50 text-red-800 hover:bg-red-100"       },
+                  { key: "baja",       label: "▼ BAJAN",    val: bajadas,        color: "bg-green-100 text-green-800",         active: "bg-green-600 text-white",           inactive: "bg-green-50 text-green-800 hover:bg-green-100" },
                 ].map(s => (
-                  <div key={s.label} className={`p-2 border-2 border-stone-900 ${s.color}`}>
+                  <button key={s.key} onClick={() => setFiltro(f => f === s.key ? "todo" : s.key)}
+                    className={`p-2 border-2 border-stone-900 transition-all ${filtro === s.key ? s.active : s.inactive}`}>
                     <div className="font-black text-xl">{s.val}</div>
                     <div className="text-[9px] font-bold tracking-widest">{s.label}</div>
-                  </div>
+                  </button>
                 ))}
               </div>
 
+              {/* Acciones masivas sobre filtro activo */}
+              {filtro !== "todo" && lineasFiltradas.length > 0 && (
+                <div className="flex gap-2 items-center bg-stone-50 border-2 border-stone-900 p-2">
+                  <span className="text-[10px] font-bold text-stone-600 flex-1">
+                    {lineasFiltradas.length} líneas filtradas — acción masiva:
+                  </span>
+                  <button onClick={() => accionMasiva("confirmado")}
+                    className="px-2 py-1 text-[10px] font-bold bg-emerald-600 text-white border border-stone-900 hover:bg-emerald-700">
+                    ✓ CONFIRMAR TODAS
+                  </button>
+                  <button onClick={() => accionMasiva("ignorado")}
+                    className="px-2 py-1 text-[10px] font-bold bg-red-600 text-white border border-stone-900 hover:bg-red-700">
+                    ✕ IGNORAR TODAS
+                  </button>
+                  <button onClick={() => accionMasiva("pendiente")}
+                    className="px-2 py-1 text-[10px] font-bold bg-stone-200 text-stone-900 border border-stone-900 hover:bg-stone-300">
+                    ↺ RESETEAR
+                  </button>
+                </div>
+              )}
+
               {/* Líneas */}
               <div className="space-y-2">
-                {lineas.map((linea, idx) => (
-                  <div key={idx} className={`border-2 border-stone-900 ${linea.estado === "ignorado" ? "opacity-40" : ""}`}>
+                {lineasFiltradas.map((linea) => (
+                  <div key={linea.idx} className={`border-2 border-stone-900 ${linea.estado === "ignorado" ? "opacity-40" : ""}`}>
                     {/* Cabecera línea */}
                     <div className="bg-stone-100 p-2 flex items-start gap-2">
                       <div className="flex-1 min-w-0">
@@ -5616,7 +5668,7 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
                         <div className="flex items-center gap-2">
                           <span className="text-[10px] text-stone-500">Precio a guardar:</span>
                           <input type="number" step="0.0001" value={linea.precioUnitarioNeto || ""}
-                            onChange={(e) => updateLinea(idx, { precioUnitarioNeto: parseFloat(e.target.value) })}
+                            onChange={(e) => updateLinea(linea.idx, { precioUnitarioNeto: parseFloat(e.target.value) })}
                             className="w-24 border border-stone-400 p-1 text-xs font-mono text-center focus:outline-none focus:border-stone-900" />
                           <span className="text-[10px] text-stone-500">€/{linea.lineaOriginal.unidad}</span>
                         </div>
@@ -5630,7 +5682,7 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
                           { key: "ignorado",   label: "✕ IGNORAR" },
                         ].map(btn => (
                           <button key={btn.key}
-                            onClick={() => updateLinea(idx, { estado: btn.key })}
+                            onClick={() => updateLinea(linea.idx, { estado: btn.key })}
                             className={`px-2 py-1 text-[10px] font-bold border ${estadoBtn(linea, btn.key)}`}>
                             {btn.label}
                           </button>
@@ -5643,7 +5695,7 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
                           Otras opciones:
                           {linea.sugerencias.slice(1).map(s => (
                             <button key={s.id}
-                              onClick={() => updateLinea(idx, { productoSugerido: s.id, confianza: s.confianza, estado: "confirmado" })}
+                              onClick={() => updateLinea(linea.idx, { productoSugerido: s.id, confianza: s.confianza, estado: "confirmado" })}
                               className="ml-2 underline text-stone-700 hover:text-stone-900">
                               {s.desc} ({s.confianza}%)
                             </button>
@@ -5657,13 +5709,13 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
                           <div>
                             <label className="text-[9px] font-bold text-stone-600">DESCRIPCIÓN ESTÁNDAR</label>
                             <input type="text" defaultValue={linea.descripcionPersonalizada || linea.lineaOriginal.descripcion_original}
-                              onBlur={(e) => updateLinea(idx, { descripcionPersonalizada: e.target.value })}
+                              onBlur={(e) => updateLinea(linea.idx, { descripcionPersonalizada: e.target.value })}
                               className="w-full border border-stone-400 p-1 text-xs font-mono focus:outline-none" />
                           </div>
                           <div>
                             <label className="text-[9px] font-bold text-stone-600">FAMILIA</label>
                             <select defaultValue={linea.familiaPersonalizada || "Varios"}
-                              onChange={(e) => updateLinea(idx, { familiaPersonalizada: e.target.value })}
+                              onChange={(e) => updateLinea(linea.idx, { familiaPersonalizada: e.target.value })}
                               className="w-full border border-stone-400 p-1 text-xs font-mono focus:outline-none">
                               {FAMILIAS.filter(f => f.nombre !== "Todo").map(f => (
                                 <option key={f.nombre} value={f.nombre}>{f.nombre}</option>
