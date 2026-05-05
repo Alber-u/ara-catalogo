@@ -5207,11 +5207,30 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
   const [extrayendo, setExtrayendo] = useState(false);
   const [confirmando, setConfirmando] = useState(false);
   const [busquedas, setBusquedas] = useState({});
+  const [creandoProv, setCreandoProv] = useState(false);
+  const [nuevoProv, setNuevoProv] = useState({ nombre: factura.proveedorDesconocido?.nombreDetectado || "", formaPago: "Contado", color: "blue", email: "" });
   const FAC_URL = "https://araujo-bot.onrender.com/api/facturas";
+  const COLORES_PROV = ["emerald","amber","blue","violet","rose","teal"];
 
   const recargar = async () => {
     const r = await fetch(FAC_URL + "/ver/" + factura.id, { headers: { "x-admin-pin": pin } });
     setFactura(await r.json());
+  };
+
+  const handleCrearProveedor = async () => {
+    if (!nuevoProv.nombre.trim()) return;
+    setCreandoProv(true);
+    try {
+      const r = await fetch(FAC_URL + "/crear-proveedor/" + factura.id, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-admin-pin": pin },
+        body: JSON.stringify(nuevoProv)
+      });
+      const data = await r.json();
+      if (!data.ok) throw new Error(data.error);
+      setFactura(data.factura);
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setCreandoProv(false); }
   };
 
   const handleExtraer = async () => {
@@ -5280,6 +5299,56 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
         </div>
 
         <div className="p-4 space-y-4">
+          {/* Proveedor desconocido — paso previo */}
+          {factura.proveedorDesconocido && factura.estado === "pendiente_revision" && (
+            <div className="border-4 border-amber-500 bg-amber-50 p-4 space-y-3">
+              <div className="font-black text-base" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+                ⚠️ PROVEEDOR NO RECONOCIDO
+              </div>
+              <div className="text-sm text-stone-700">
+                La factura indica: <span className="font-bold">"{factura.proveedorDesconocido.nombreDetectado}"</span>
+                {factura.proveedorDesconocido.cifDetectado && <span className="ml-2 text-stone-500">CIF: {factura.proveedorDesconocido.cifDetectado}</span>}
+              </div>
+              <div className="text-xs text-stone-600">Este proveedor no existe en tu catálogo. Rellena los datos para crearlo:</div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[9px] font-bold text-stone-600">NOMBRE</label>
+                  <input type="text" value={nuevoProv.nombre || factura.proveedorDesconocido.nombreDetectado}
+                    onChange={(e) => setNuevoProv(p => ({...p, nombre: e.target.value}))}
+                    className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:outline-none focus:bg-white" />
+                </div>
+                <div>
+                  <label className="text-[9px] font-bold text-stone-600">FORMA DE PAGO</label>
+                  <input type="text" value={nuevoProv.formaPago}
+                    onChange={(e) => setNuevoProv(p => ({...p, formaPago: e.target.value}))}
+                    className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:outline-none focus:bg-white" />
+                </div>
+                <div>
+                  <label className="text-[9px] font-bold text-stone-600">EMAIL</label>
+                  <input type="email" value={nuevoProv.email}
+                    onChange={(e) => setNuevoProv(p => ({...p, email: e.target.value}))}
+                    className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:outline-none focus:bg-white" />
+                </div>
+                <div>
+                  <label className="text-[9px] font-bold text-stone-600">COLOR</label>
+                  <div className="flex gap-1 mt-1">
+                    {COLORES_PROV.map(c => (
+                      <button key={c} onClick={() => setNuevoProv(p => ({...p, color: c}))}
+                              className={`w-7 h-7 border-2 ${nuevoProv.color === c ? "border-stone-900" : "border-stone-300"} bg-${c}-400`} />
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={handleCrearProveedor} disabled={creandoProv}
+                        className={`px-4 py-2 font-black text-xs tracking-widest border-2 border-stone-900 ${creandoProv ? "bg-stone-300 cursor-wait" : "bg-stone-900 text-amber-400 hover:bg-amber-400 hover:text-stone-900"}`}
+                        style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+                  {creandoProv ? "CREANDO..." : "✓ CREAR PROVEEDOR Y CONTINUAR"}
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Sin extraer */}
           {factura.estado === "pendiente_extraccion" && (
             <div className="text-center py-8">
