@@ -5270,8 +5270,13 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
     let jsPDFmod;
     try { jsPDFmod = await import("jspdf"); } catch(e) { alert("No se pudo cargar PDF"); return; }
     const { jsPDF } = jsPDFmod;
-    const doc = new jsPDF({ unit: "mm", format: "a4" });
-    let y = 15;
+    // Horizontal (landscape)
+    const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "landscape" });
+    const PW = 297; // page width landscape
+    const ML = 12; // margin left
+    const MR = 12; // margin right
+    const W = PW - ML - MR; // usable width
+    let y = 14;
 
     const subidas = lineas.filter(l => l.variacionPrecio?.sube && l.estado !== "ignorado");
     const bajadas = lineas.filter(l => l.variacionPrecio?.baja && l.estado !== "ignorado");
@@ -5283,88 +5288,139 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
 
     // Cabecera
     doc.setFont("helvetica", "bold"); doc.setFontSize(16);
-    doc.text("INFORME DE VARIACION DE PRECIOS", 105, y, { align: "center" }); y += 6;
+    doc.text("INFORME DE VARIACION DE PRECIOS", PW / 2, y, { align: "center" }); y += 6;
     doc.setFontSize(9); doc.setFont("helvetica", "normal");
-    doc.text("ARA Corporate Sociedad de Inversiones, SL · CIF B90488222", 105, y, { align: "center" }); y += 4;
-    doc.text("Avd San Francisco Javier 9 PL6 MOD 9, 41018 Sevilla", 105, y, { align: "center" }); y += 8;
-    doc.setDrawColor(0); doc.setLineWidth(0.5); doc.line(15, y, 195, y); y += 6;
+    doc.text("ARA Corporate Sociedad de Inversiones, SL · CIF B90488222", PW / 2, y, { align: "center" }); y += 4;
+    doc.text("Avd San Francisco Javier 9 PL6 MOD 9, 41018 Sevilla", PW / 2, y, { align: "center" }); y += 7;
+    doc.setDrawColor(0); doc.setLineWidth(0.5); doc.line(ML, y, PW - MR, y); y += 5;
 
-    // Datos factura
-    doc.setFont("helvetica", "bold"); doc.setFontSize(10);
-    doc.text("DATOS DE LA FACTURA", 15, y); y += 5;
-    doc.setFont("helvetica", "normal"); doc.setFontSize(9);
-    doc.text(`Proveedor:       ${factura.datosExtraidos?.proveedor || "-"}`, 15, y); y += 4;
-    doc.text(`Numero factura:  ${factura.datosExtraidos?.numero_factura || "-"}`, 15, y); y += 4;
-    doc.text(`Fecha factura:   ${factura.datosExtraidos?.fecha || "-"}`, 15, y); y += 4;
-    doc.text(`Fecha informe:   ${new Date().toLocaleDateString("es-ES", { dateStyle: "long" })}`, 15, y); y += 8;
-    doc.setDrawColor(180); doc.setLineWidth(0.3); doc.line(15, y, 195, y); y += 6;
+    // Datos factura en dos columnas
+    doc.setFont("helvetica", "bold"); doc.setFontSize(9);
+    doc.text(`Proveedor: ${factura.datosExtraidos?.proveedor || "-"}`, ML, y);
+    doc.text(`Factura: ${factura.datosExtraidos?.numero_factura || "-"}`, PW / 2, y);
+    y += 4;
+    doc.setFont("helvetica", "normal");
+    doc.text(`Fecha factura: ${factura.datosExtraidos?.fecha || "-"}`, ML, y);
+    doc.text(`Fecha informe: ${new Date().toLocaleDateString("es-ES", { dateStyle: "long" })}`, PW / 2, y);
+    y += 4;
+    doc.text(`Total factura: EUR${factura.datosExtraidos?.total?.toFixed(2) || "-"}`, ML, y);
+    y += 6;
+    doc.setDrawColor(180); doc.setLineWidth(0.3); doc.line(ML, y, PW - MR, y); y += 5;
+
+    // Columnas: Ref | Descripción | Cant | P.anterior | P.nuevo | Dif.unit | Total fact anterior | Total fact nuevo | Dif.total | %
+    const cols = {
+      ref:  ML,
+      desc: ML + 18,
+      cant: ML + 118,
+      pant: ML + 133,
+      pnew: ML + 155,
+      dunit: ML + 175,
+      tant: ML + 198,
+      tnew: ML + 222,
+      dtot: ML + 245,
+      pct:  PW - MR,
+    };
 
     const pintarTabla = (titulo, items, colorR, colorG, colorB) => {
       if (items.length === 0) return;
-      if (y > 230) { doc.addPage(); y = 20; }
+      if (y > 175) { doc.addPage(); y = 14; }
+
       doc.setFont("helvetica", "bold"); doc.setFontSize(11);
       doc.setTextColor(colorR, colorG, colorB);
-      doc.text(titulo + ` (${items.length} productos)`, 15, y); y += 5;
+      doc.text(`${titulo} (${items.length} productos)`, ML, y); y += 5;
       doc.setTextColor(0, 0, 0);
 
       // Cabecera tabla
-      doc.setFillColor(240, 240, 240);
-      doc.rect(15, y - 4, 180, 6, "F");
-      doc.setFont("helvetica", "bold"); doc.setFontSize(7.5);
-      doc.text("Ref", 17, y);
-      doc.text("Descripcion", 35, y);
-      doc.text("Precio anterior", 115, y, { align: "right" });
-      doc.text("Precio nuevo", 145, y, { align: "right" });
-      doc.text("Diferencia", 170, y, { align: "right" });
-      doc.text("% Var.", 192, y, { align: "right" });
+      doc.setFillColor(230, 230, 230);
+      doc.rect(ML, y - 4, W, 6, "F");
+      doc.setFont("helvetica", "bold"); doc.setFontSize(7);
+      doc.text("Ref", cols.ref, y);
+      doc.text("Descripcion", cols.desc, y);
+      doc.text("Cant", cols.cant, y, { align: "right" });
+      doc.text("P.Anterior", cols.pant, y, { align: "right" });
+      doc.text("P.Nuevo", cols.pnew, y, { align: "right" });
+      doc.text("Dif/uni", cols.dunit, y, { align: "right" });
+      doc.text("Total anterior", cols.tant, y, { align: "right" });
+      doc.text("Total nuevo", cols.tnew, y, { align: "right" });
+      doc.text("Dif.total", cols.dtot, y, { align: "right" });
+      doc.text("% Var.", cols.pct, y, { align: "right" });
       y += 4;
 
-      doc.setFont("helvetica", "normal"); doc.setFontSize(8);
-      let totalDiff = 0;
+      doc.setFont("helvetica", "normal"); doc.setFontSize(7.5);
+      let sumDifTotal = 0;
+      let sumTotAnterior = 0;
+      let sumTotNuevo = 0;
+
       items.forEach(l => {
-        if (y > 270) { doc.addPage(); y = 20; }
-        const ref = l.lineaOriginal?.referencia_proveedor || "-";
-        const desc = (l.lineaOriginal?.descripcion_original || "").length > 45
-          ? l.lineaOriginal.descripcion_original.substring(0, 43) + ".."
+        if (y > 190) { doc.addPage(); y = 14; }
+        const ref = (l.lineaOriginal?.referencia_proveedor || "-").substring(0, 10);
+        const desc = (l.lineaOriginal?.descripcion_original || "").length > 52
+          ? l.lineaOriginal.descripcion_original.substring(0, 50) + ".."
           : (l.lineaOriginal?.descripcion_original || "");
+        const cant = parseFloat(l.lineaOriginal?.cantidad) || 0;
         const actual = l.precioActual || 0;
         const nuevo = l.precioUnitarioNeto || 0;
-        const diff = nuevo - actual;
+        const diffUnit = nuevo - actual;
+        const totAnt = actual * cant;
+        const totNew = nuevo * cant;
+        const diffTot = totNew - totAnt;
         const pct = l.variacionPrecio?.pct || 0;
-        totalDiff += diff;
+        sumDifTotal += diffTot;
+        sumTotAnterior += totAnt;
+        sumTotNuevo += totNew;
 
-        doc.text(ref, 17, y);
-        doc.text(desc, 35, y);
-        doc.text("EUR" + actual.toFixed(4), 115, y, { align: "right" });
-        doc.text("EUR" + nuevo.toFixed(4), 145, y, { align: "right" });
+        doc.text(ref, cols.ref, y);
+        doc.text(desc, cols.desc, y);
+        doc.text(String(cant), cols.cant, y, { align: "right" });
+        doc.text("EUR" + actual.toFixed(4), cols.pant, y, { align: "right" });
+        doc.text("EUR" + nuevo.toFixed(4), cols.pnew, y, { align: "right" });
         doc.setTextColor(colorR, colorG, colorB);
-        doc.text((diff >= 0 ? "+" : "") + "EUR" + diff.toFixed(4), 170, y, { align: "right" });
-        doc.text((pct >= 0 ? "+" : "") + pct + "%", 192, y, { align: "right" });
-        doc.setTextColor(0, 0, 0);
-        y += 4;
+        doc.text((diffUnit >= 0 ? "+" : "") + "EUR" + diffUnit.toFixed(4), cols.dunit, y, { align: "right" });
+        doc.setTextColor(0,0,0);
+        doc.text("EUR" + totAnt.toFixed(2), cols.tant, y, { align: "right" });
+        doc.text("EUR" + totNew.toFixed(2), cols.tnew, y, { align: "right" });
+        doc.setTextColor(colorR, colorG, colorB);
+        doc.text((diffTot >= 0 ? "+" : "") + "EUR" + diffTot.toFixed(2), cols.dtot, y, { align: "right" });
+        doc.text((pct >= 0 ? "+" : "") + pct + "%", cols.pct, y, { align: "right" });
+        doc.setTextColor(0,0,0);
+        y += 3.8;
       });
 
-      // Total impacto
-      y += 2; doc.setLineWidth(0.3); doc.line(100, y, 195, y); y += 4;
-      doc.setFont("helvetica", "bold");
-      doc.text("Impacto total por unidad:", 105, y);
+      // Totales
+      y += 1; doc.setLineWidth(0.3); doc.line(cols.tant - 10, y, PW - MR, y); y += 3.5;
+      doc.setFont("helvetica", "bold"); doc.setFontSize(8);
+      doc.text("TOTAL:", cols.tant - 30, y);
+      doc.text("EUR" + sumTotAnterior.toFixed(2), cols.tant, y, { align: "right" });
+      doc.text("EUR" + sumTotNuevo.toFixed(2), cols.tnew, y, { align: "right" });
       doc.setTextColor(colorR, colorG, colorB);
-      doc.text((totalDiff >= 0 ? "+" : "") + "EUR" + totalDiff.toFixed(4), 192, y, { align: "right" });
-      doc.setTextColor(0, 0, 0);
+      doc.text((sumDifTotal >= 0 ? "+" : "") + "EUR" + sumDifTotal.toFixed(2), cols.dtot, y, { align: "right" });
+      doc.setTextColor(0,0,0);
       y += 8;
     };
 
-    // Subidas en rojo
     pintarTabla("PRODUCTOS CON SUBIDA DE PRECIO", subidas, 180, 0, 0);
+    pintarTabla("PRODUCTOS CON BAJADA DE PRECIO", bajadas, 0, 130, 0);
 
-    // Bajadas en verde
-    pintarTabla("PRODUCTOS CON BAJADA DE PRECIO", bajadas, 0, 120, 0);
+    // Resumen final
+    if (y > 175) { doc.addPage(); y = 14; }
+    doc.setDrawColor(0); doc.setLineWidth(0.5); doc.line(ML, y, PW - MR, y); y += 5;
+    doc.setFont("helvetica", "bold"); doc.setFontSize(10);
+    doc.text("RESUMEN GLOBAL DEL IMPACTO", ML, y); y += 5;
+    doc.setFont("helvetica", "normal"); doc.setFontSize(9);
+    const totalSubidaUnit = subidas.reduce((s,l) => s + ((l.precioUnitarioNeto||0) - (l.precioActual||0)) * (l.lineaOriginal?.cantidad||0), 0);
+    const totalBajadaUnit = bajadas.reduce((s,l) => s + ((l.precioUnitarioNeto||0) - (l.precioActual||0)) * (l.lineaOriginal?.cantidad||0), 0);
+    doc.setTextColor(180,0,0);
+    doc.text(`Impacto subidas:  EUR${totalSubidaUnit.toFixed(2)} sobre esta factura`, ML, y); y += 4;
+    doc.setTextColor(0,130,0);
+    doc.text(`Impacto bajadas:  EUR${totalBajadaUnit.toFixed(2)} sobre esta factura`, ML, y); y += 4;
+    doc.setTextColor(0,0,0);
+    const neto = totalSubidaUnit + totalBajadaUnit;
+    doc.setFont("helvetica", "bold");
+    doc.text(`Impacto neto:     EUR${(neto >= 0 ? "+" : "") + neto.toFixed(2)} sobre esta factura`, ML, y); y += 7;
 
-    // Nota final
-    if (y > 250) { doc.addPage(); y = 20; }
-    doc.setFont("helvetica", "italic"); doc.setFontSize(8); doc.setTextColor(100);
-    doc.text("Este informe ha sido generado automaticamente desde el sistema de gestion de pedidos ARA Corporate.", 15, y); y += 4;
-    doc.text("Los precios anteriores corresponden a los registrados en el catalogo interno en el momento de la importacion.", 15, y);
+    doc.setFont("helvetica", "italic"); doc.setFontSize(7.5); doc.setTextColor(100);
+    doc.text("Informe generado automaticamente desde el sistema de gestion de pedidos ARA Corporate.", ML, y); y += 3.5;
+    doc.text("Los precios anteriores corresponden a los registrados en el catalogo interno en el momento de la importacion.", ML, y);
     doc.setTextColor(0);
 
     const fname = `Informe_Variacion_${(factura.datosExtraidos?.proveedor || "proveedor").replace(/[^a-z0-9]/gi,"_")}_${factura.datosExtraidos?.numero_factura || factura.id}.pdf`;
