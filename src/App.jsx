@@ -6633,9 +6633,9 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
                       </div>
                     </div>
 
-                    {/* Producto sugerido */}
+                    {/* Producto sugerido (solo si tiene match válido y NO está marcado como nuevo) */}
                     <div className="p-2 space-y-2">
-                      {linea.productoSugerido && (
+                      {linea.productoSugerido && linea.estado !== "nuevo" && (
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-[10px] text-stone-500">Sugerido:</span>
                           <span className="text-xs font-bold flex-1">
@@ -6650,35 +6650,56 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
                         </div>
                       )}
 
-                      {/* Comparativa de precio */}
-                      <div className="bg-stone-50 border border-stone-200 p-2 rounded-sm space-y-1">
-                        <div className="flex items-center gap-3 flex-wrap text-[10px]">
-                          <span className="text-stone-500">Bruto: <span className="font-mono font-bold text-stone-800">€{(linea.precioUnitarioBruto||0).toFixed(3)}</span></span>
-                          {linea.descuento > 0 && <span className="text-stone-500">Dto: <span className="font-bold text-amber-700">{linea.descuento}%</span></span>}
-                          <span className="text-stone-500">Neto: <span className="font-mono font-bold text-stone-900">€{(linea.precioUnitarioNeto||0).toFixed(4)}</span></span>
-                          {linea.precioActual !== null && (
-                            <span className="text-stone-500">
-                              Actual: <span className="font-mono font-bold">€{linea.precioActual.toFixed(4)}</span>
-                              {linea.variacionPrecio && linea.variacionPrecio.pct !== 0 && (
-                                <span className={`ml-1 font-bold ${linea.variacionPrecio.sube ? "text-red-600" : "text-emerald-600"}`}>
-                                  {linea.variacionPrecio.sube ? "▲" : "▼"} {Math.abs(linea.variacionPrecio.pct)}%
-                                  {" "}(€{Math.abs(linea.variacionPrecio.diff).toFixed(4)})
-                                </span>
-                              )}
-                              {linea.variacionPrecio && linea.variacionPrecio.pct === 0 && (
-                                <span className="ml-1 text-stone-400">= sin cambio</span>
-                              )}
-                            </span>
-                          )}
+                      {/* Aviso de producto nuevo (sustituye a la sugerencia cuando se va a crear) */}
+                      {linea.estado === "nuevo" && (
+                        <div className="bg-blue-50 border border-blue-300 px-2 py-1 text-[11px] text-blue-900 flex items-center gap-2">
+                          <span className="text-base">🆕</span>
+                          <span><b>Producto nuevo</b> — se creará en tu catálogo cuando apliques la factura</span>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] text-stone-500">Precio a guardar:</span>
+                      )}
+
+                      {/* Comparativa de precio (solo si tiene sentido: NO es nuevo, hay precio actual) */}
+                      {linea.estado !== "nuevo" && (
+                        <div className="bg-stone-50 border border-stone-200 p-2 rounded-sm space-y-1">
+                          <div className="flex items-center gap-3 flex-wrap text-[10px]">
+                            <span className="text-stone-500">Bruto: <span className="font-mono font-bold text-stone-800">€{(linea.precioUnitarioBruto||0).toFixed(3)}</span></span>
+                            {linea.descuento > 0 && <span className="text-stone-500">Dto: <span className="font-bold text-amber-700">{linea.descuento}%</span></span>}
+                            <span className="text-stone-500">Neto: <span className="font-mono font-bold text-stone-900">€{(linea.precioUnitarioNeto||0).toFixed(4)}</span></span>
+                            {linea.precioActual !== null && (
+                              <span className="text-stone-500">
+                                Actual: <span className="font-mono font-bold">€{linea.precioActual.toFixed(4)}</span>
+                                {linea.variacionPrecio && linea.variacionPrecio.pct !== 0 && (
+                                  <span className={`ml-1 font-bold ${linea.variacionPrecio.sube ? "text-red-600" : "text-emerald-600"}`}>
+                                    {linea.variacionPrecio.sube ? "▲" : "▼"} {Math.abs(linea.variacionPrecio.pct)}%
+                                    {" "}(€{Math.abs(linea.variacionPrecio.diff).toFixed(4)})
+                                  </span>
+                                )}
+                                {linea.variacionPrecio && linea.variacionPrecio.pct === 0 && (
+                                  <span className="ml-1 text-stone-400">= sin cambio</span>
+                                )}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] text-stone-500">Precio a guardar:</span>
+                            <input type="number" step="0.0001" value={linea.precioUnitarioNeto || ""}
+                              onChange={(e) => updateLinea(linea.idx, { precioUnitarioNeto: parseFloat(e.target.value) })}
+                              className="w-24 border border-stone-400 p-1 text-xs font-mono text-center focus:outline-none focus:border-stone-900" />
+                            <span className="text-[10px] text-stone-500">€/{linea.lineaOriginal.unidad}</span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* En estado nuevo, mostrar solo el precio que se va a guardar (sin comparativa irrelevante) */}
+                      {linea.estado === "nuevo" && (
+                        <div className="bg-stone-50 border border-stone-200 p-2 rounded-sm flex items-center gap-2">
+                          <span className="text-[10px] text-stone-500">Precio a guardar en el nuevo producto:</span>
                           <input type="number" step="0.0001" value={linea.precioUnitarioNeto || ""}
                             onChange={(e) => updateLinea(linea.idx, { precioUnitarioNeto: parseFloat(e.target.value) })}
                             className="w-24 border border-stone-400 p-1 text-xs font-mono text-center focus:outline-none focus:border-stone-900" />
                           <span className="text-[10px] text-stone-500">€/{linea.lineaOriginal.unidad}</span>
                         </div>
-                      </div>
+                      )}
 
                       {/* Botones de acción */}
                       <div className="flex gap-1 flex-wrap">
