@@ -5195,7 +5195,7 @@ function PestañaFacturas({ api, pin }) {
             facturas.forEach(f => {
               let subF = 0, bajF = 0;
               (f.lineasRevision || []).forEach(l => {
-                if (l.estado === "ignorado" || !l.variacionPrecio) return;
+                if (!l.variacionPrecio) return;
                 const cant = parseFloat(l.lineaOriginal?.cantidad) || 0;
                 const imp = (l.variacionPrecio.diff || 0) * cant;
                 if (l.variacionPrecio.sube) subF += imp;
@@ -5242,7 +5242,7 @@ function PestañaFacturas({ api, pin }) {
               // Calcular impacto económico de la factura (solo líneas con variación, ignorando "ignorado")
               let impactoSube = 0, impactoBaja = 0, nSube = 0, nBaja = 0;
               (f.lineasRevision || []).forEach(l => {
-                if (l.estado === "ignorado" || !l.variacionPrecio) return;
+                if (!l.variacionPrecio) return;
                 const cant = parseFloat(l.lineaOriginal?.cantidad) || 0;
                 const impacto = (l.variacionPrecio.diff || 0) * cant;
                 if (l.variacionPrecio.sube) { impactoSube += impacto; nSube++; }
@@ -5638,14 +5638,15 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
   const revisar     = lineas.filter(l => l.estado === "revisar").length;
 
   // Impacto económico = diff_unitario × cantidad de la factura
-  // Ignoramos las líneas en estado "ignorado" para no contaminar las cifras
+  // Incluimos TODAS las líneas con variación, incluso las ignoradas:
+  // ignorar significa "no aplicar al catálogo", no "ocultar del análisis económico"
   const impactoLinea = (l) => {
-    if (!l.variacionPrecio || l.estado === "ignorado") return 0;
+    if (!l.variacionPrecio) return 0;
     const cant = parseFloat(l.lineaOriginal?.cantidad) || 0;
     return l.variacionPrecio.diff * cant;
   };
-  const lineasSube = lineas.filter(l => l.variacionPrecio?.sube && l.estado !== "ignorado");
-  const lineasBaja = lineas.filter(l => l.variacionPrecio?.baja && l.estado !== "ignorado");
+  const lineasSube = lineas.filter(l => l.variacionPrecio?.sube);
+  const lineasBaja = lineas.filter(l => l.variacionPrecio?.baja);
   const subidas     = lineasSube.length;
   const bajadas     = lineasBaja.length;
   const impactoSube = lineasSube.reduce((acc, l) => acc + impactoLinea(l), 0); // > 0
