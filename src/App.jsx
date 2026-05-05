@@ -5989,8 +5989,9 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
         // mostramos al menos los tramos con precio distinto al original
         const tramosMostrar = tramosSobrecoste.length > 0 ? tramosSobrecoste : tramos;
 
-        // Altura dinámica: 18 cabecera + 6 por tramo + 4 línea base
-        const altoBox = 18 + (tramosMostrar.length * 6) + 4;
+        // Altura dinámica: 18 cabecera + (5 dato + 4 facturas) por tramo + 4 línea base
+        const altoPorTramo = 9; // 5 datos + 4 línea de facturas
+        const altoBox = 18 + (tramosMostrar.length * altoPorTramo) + 4;
         if (y + altoBox > PH - 50) { doc.addPage(); y = 18; }
 
         doc.setFillColor(255, 248, 240); doc.setDrawColor(180, 100, 0); doc.setLineWidth(0.4);
@@ -6041,7 +6042,7 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
         yT += 4;
         doc.setTextColor(0); doc.setFont("helvetica", "normal"); doc.setFontSize(8);
 
-        // Cada tramo
+        // Cada tramo (línea de datos + línea de facturas debajo)
         for (const t of tramosMostrar) {
           const esTramoNeutro = t.precioAntes !== null && Math.abs(t.precio - t.precioAntes) < 0.01;
           const fechaIniTxt = t.fechaIni ? new Date(t.fechaIni).toLocaleDateString("es-ES") : "—";
@@ -6055,6 +6056,7 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
             doc.setTextColor(180, 0, 0);
             doc.setFont("helvetica", "bold");
           }
+          doc.setFontSize(8);
           doc.text(`EUR ${t.precio.toFixed(4)}`, cT.precio, yT);
           if (esTramoNeutro) doc.text("(pactado)", cT.precio + 22, yT);
 
@@ -6079,11 +6081,33 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
             doc.setTextColor(t.sobrecoste > 0 ? 180 : 0, t.sobrecoste > 0 ? 0 : 130, 0);
             doc.setFont("helvetica", "bold");
             doc.text(`${t.sobrecoste >= 0 ? "+" : ""}EUR ${t.sobrecoste.toFixed(2)}`, cT.sobre, yT, { align: "right" });
-            doc.setTextColor(0); doc.setFont("helvetica", "normal");
+            doc.setFont("helvetica", "normal");
           } else {
             doc.setTextColor(120);
             doc.text("—", cT.sobre, yT, { align: "right" });
-            doc.setTextColor(0);
+          }
+
+          // Línea de facturas afectadas debajo del tramo (en gris pequeño)
+          yT += 4;
+          const numsFac = t.apariciones.map(a => a.numFact).filter(Boolean);
+          if (numsFac.length > 0) {
+            doc.setTextColor(80); doc.setFontSize(6.5); doc.setFont("helvetica", "italic");
+            // Truncar el texto si excede el ancho disponible
+            const prefijo = "Facturas: ";
+            const maxAncho = (PW - MR - 3) - (ML + 8) - doc.getTextWidth(prefijo);
+            let textoFac = numsFac.join(", ");
+            if (doc.getTextWidth(textoFac) > maxAncho) {
+              // Reducir progresivamente: probar con +X más
+              for (let n = numsFac.length - 1; n >= 1; n--) {
+                const cand = numsFac.slice(0, n).join(", ") + `, +${numsFac.length - n} más`;
+                if (doc.getTextWidth(cand) <= maxAncho) {
+                  textoFac = cand;
+                  break;
+                }
+              }
+            }
+            doc.text(prefijo + textoFac, ML + 8, yT);
+            doc.setTextColor(0); doc.setFont("helvetica", "normal");
           }
 
           yT += 5;
@@ -6167,12 +6191,12 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
             const fFin = t.fechaFin && t.fechaFin !== t.fechaIni ? ` — ${new Date(t.fechaFin).toLocaleDateString("es-ES")}` : "";
             const esTramoNeutro = t.precioAntes !== null && Math.abs(t.precio - t.precioAntes) < 0.01;
             doc.setFontSize(7.5);
-            // Bullet con color
-            if (esTramoNeutro) doc.setTextColor(0, 130, 0);
-            else doc.setTextColor(180, 0, 0);
-            doc.setFont("helvetica", "bold");
-            doc.text("●", ML + 4, y);
-            doc.setFont("helvetica", "normal"); doc.setTextColor(0);
+            // Cuadradito de color como bullet (más fiable que un Unicode "●" en helvetica)
+            if (esTramoNeutro) doc.setFillColor(0, 130, 0);
+            else doc.setFillColor(180, 0, 0);
+            doc.rect(ML + 3, y - 2, 1.8, 1.8, "F");
+
+            doc.setTextColor(0); doc.setFont("helvetica", "normal");
             const etiq = esTramoNeutro ? "(precio pactado)" : (t.diffUnitario !== null ? `(${t.diffUnitario >= 0 ? "+" : ""}${t.diffUnitario.toFixed(4)}/u, ${t.pctVar >= 0 ? "+" : ""}${t.pctVar.toFixed(1)}%)` : "");
             doc.text(`EUR ${t.precio.toFixed(4)}  ${etiq}`, ML + 8, y);
             doc.text(`Período: ${fIni}${fFin}  ·  ${t.nFacturas} factura${t.nFacturas === 1 ? "" : "s"}  ·  ${t.cantTotal.toFixed(0)} ${p.unidad}`, ML + 80, y);
