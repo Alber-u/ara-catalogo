@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useId, useEffect } from "react";
+import React, { useState, useMemo, useId, useEffect, useRef } from "react";
 import {
   Search, ShoppingCart, Plus, Minus, X, Package, Wrench, Hammer,
   Boxes, Construction, Check, Trophy,
@@ -3439,6 +3439,7 @@ function PanelAdmin({ pin, onSalir }) {
     { id: "operarios",  nombre: "OPERARIOS",  icon: "👷" },
     { id: "proveedores",nombre: "PROVEEDORES", icon: "🏢" },
     { id: "pedidos",   nombre: "PEDIDOS",  icon: "📋" },
+    { id: "facturas",  nombre: "FACTURAS", icon: "🧾" },
     { id: "config",    nombre: "CONFIG",   icon: "⚙️" },
   ];
 
@@ -3493,7 +3494,8 @@ function PanelAdmin({ pin, onSalir }) {
         {pestaña === "obras"     && <PestañaObras data={data} api={api} reload={recargarTodo} />}
         {pestaña === "operarios" && <PestañaOperarios data={data} api={api} reload={recargarTodo} />}
         {pestaña === "proveedores" && <PestañaProveedores data={data} api={api} reload={recargarTodo} />}
-        {pestaña === "pedidos"   && <PestañaPedidos data={data} api={api} reload={recargarTodo} />}
+        {pestaña === "pedidos"   && <PestañaPedidos data={data} />}
+        {pestaña === "facturas"  && <PestañaFacturas api={api} pin={pin} />}
         {pestaña === "config"    && <PestañaConfig data={data} api={api} reload={recargarTodo} pin={pin} onSalir={onSalir} />}
       </div>
     </div>
@@ -4749,7 +4751,7 @@ function PestañaOperarios({ data, api, reload }) {
 // =========================================================
 //  PESTAÑA PEDIDOS
 // =========================================================
-function PestañaPedidos({ data, api, reload }) {
+function PestañaPedidos({ data }) {
   const [filtroObra, setFiltroObra] = useState("");
   const [filtroOp, setFiltroOp] = useState("");
   const [pedidoSel, setPedidoSel] = useState(null);
@@ -4826,385 +4828,110 @@ function PestañaPedidos({ data, api, reload }) {
         })}
       </div>
 
-      {pedidoSel && <ModalDetallePedido pedido={pedidoSel} api={api} reload={reload} proveedores={data.proveedores || PROVEEDORES_SEED} onCerrar={() => setPedidoSel(null)} />}
+      {pedidoSel && <ModalDetallePedido pedido={pedidoSel} onCerrar={() => setPedidoSel(null)} />}
     </div>
   );
 }
 
-function ModalDetallePedido({ pedido, api, reload, proveedores, onCerrar }) {
-  const provList = proveedores || PROVEEDORES_SEED;
-  const [lineasAqua, setLineasAqua] = useState(pedido.lineasAqua || []);
-  const [lineasAram, setLineasAram] = useState(pedido.lineasAram || []);
-  const [lineasNoList, setLineasNoList] = useState(pedido.lineasNoListado || []);
-  const [notas, setNotas] = useState(pedido.notas || "");
-  const [guardando, setGuardando] = useState(false);
-  const [busqueda, setBusqueda] = useState("");
-  const [mostrarBuscador, setMostrarBuscador] = useState(false);
-  const [provBuscador, setProvBuscador] = useState(provList[0]?.id || "aqua");
-  const [añadirManual, setAñadirManual] = useState(false);
-  const [manual, setManual] = useState({ desc: "", cantidad: 1, unidad: "uni", precioUnit: "", prov: provList[0]?.id || "aqua" });
-
-  const productosFiltrados = busqueda.length > 1
-    ? CATALOGO.filter(p => p.desc.toLowerCase().includes(busqueda.toLowerCase()) || (p.proveedores?.[provBuscador]?.ref || "").toLowerCase().includes(busqueda.toLowerCase())).slice(0, 8)
-    : [];
-
-  // Build datosPedido for PDF/WA
-  const buildDatos = () => {
-    const totalAqua = lineasAqua.reduce((s, l) => s + (l.importe || 0), 0);
-    const totalAram = lineasAram.reduce((s, l) => s + (l.importe || 0), 0);
-    return {
-      pedidoId: pedido.id,
-      fechaIso: pedido.fecha,
-      operario: pedido.operario,
-      obra: pedido.obra,
-      lineasAqua, lineasAram,
-      lineasNoListado: lineasNoList,
-      notas,
-      totalAqua, totalAram,
-      totalGeneral: totalAqua + totalAram,
-      ivaAqua: totalAqua * 0.21,
-      ivaAram: totalAram * 0.21,
-    };
-  };
-
-  const getProvNombreLocal = (id) => provList.find(p => p.id === id)?.nombre || id;
-
-  const handleGuardar = async () => {
-    setGuardando(true);
-    try {
-      await api.put("/admin/pedido/" + pedido.id, {
-        lineasAqua, lineasAram, lineasNoListado: lineasNoList, notas
-      });
-      reload();
-      onCerrar();
-    } catch (e) {
-      alert("Error guardando: " + e.message);
-    } finally { setGuardando(false); }
-  };
-
-  const updateLinea = (prov, idx, field, val) => {
-    const setter = prov === "aqua" ? setLineasAqua : setLineasAram;
-    setter(prev => prev.map((l, i) => {
-      if (i !== idx) return l;
-      const updated = { ...l, [field]: field === "cantidad" || field === "precioUnit" ? parseFloat(val) || 0 : val };
-      updated.importe = +(updated.cantidad * (updated.precioUnit || 0)).toFixed(2);
-      return updated;
-    }));
-  };
-
-  const removeLinea = (prov, idx) => {
-    const setter = prov === "aqua" ? setLineasAqua : setLineasAram;
-    setter(prev => prev.filter((_, i) => i !== idx));
-  };
-
-  const addFromCatalog = (producto) => {
-    const provData = producto.proveedores?.[provBuscador];
-    if (!provData) { alert(`Este producto no tiene precio para ${getProvNombreLocal(provBuscador)}`); return; }
-    const neto = precioNeto(provData);
-    const newLine = { ref: provData.ref, desc: producto.desc, cantidad: 1, unidad: producto.unidad, precioUnit: neto, importe: neto };
-    if (provBuscador === "aqua") setLineasAqua(prev => [...prev, newLine]);
-    else setLineasAram(prev => [...prev, newLine]);
-    setBusqueda(""); setMostrarBuscador(false);
-  };
-
-  const addManual = () => {
-    if (!manual.desc.trim() || !manual.precioUnit) return;
-    const neto = parseFloat(manual.precioUnit);
-    const newLine = { ref: "—", desc: manual.desc, cantidad: parseFloat(manual.cantidad) || 1, unidad: manual.unidad, precioUnit: neto, importe: +(neto * (parseFloat(manual.cantidad) || 1)).toFixed(2) };
-    if (manual.prov === "aqua") setLineasAqua(prev => [...prev, newLine]);
-    else setLineasAram(prev => [...prev, newLine]);
-    setManual({ desc: "", cantidad: 1, unidad: "uni", precioUnit: "", prov: manual.prov });
-    setAñadirManual(false);
-  };
-
-  const totA = lineasAqua.reduce((s, l) => s + (l.importe || 0), 0);
-  const totR = lineasAram.reduce((s, l) => s + (l.importe || 0), 0);
-
-  // PDF generation
-  const handlePDF = async (prov) => {
-    const d = buildDatos();
-    // Temporarily set datosPedidoEnviado equivalent and call descargarPDF
-    // We'll generate inline using the same logic
-    let jsPDFmod;
-    try { jsPDFmod = await import("jspdf"); } catch(e) { alert("No se pudo cargar PDF"); return; }
-    const { jsPDF } = jsPDFmod;
-    const doc = new jsPDF({ unit: "mm", format: "a4" });
-    let y = 15;
-    const esCompleto = prov === "completo";
-    const provObj = provList.find(p => p.id === prov);
-    const nombreProv = esCompleto ? "TODOS LOS PROVEEDORES" : (provObj?.nombre?.toUpperCase() || prov.toUpperCase());
-
-    doc.setFont("helvetica", "bold"); doc.setFontSize(16);
-    doc.text(`PEDIDO · ARA CORPORATE${esCompleto ? "" : " → " + nombreProv}`, 105, y, { align: "center" }); y += 6;
-    doc.setFontSize(9); doc.setFont("helvetica", "normal");
-    doc.text("ARA Corporate Sociedad de Inversiones, SL · CIF B90488222", 105, y, { align: "center" }); y += 4;
-    doc.text("Avd San Francisco Javier 9 P6 M9, 41018 Sevilla · Tel 640527426", 105, y, { align: "center" }); y += 8;
-    doc.setDrawColor(0); doc.setLineWidth(0.5); doc.line(15, y, 195, y); y += 6;
-
-    doc.setFont("helvetica", "bold"); doc.setFontSize(10);
-    doc.text("DATOS DEL PEDIDO", 15, y); y += 5;
-    doc.setFont("helvetica", "normal"); doc.setFontSize(9);
-    doc.text(`Fecha:     ${new Date(d.fechaIso).toLocaleDateString("es-ES", { dateStyle: "long" })}`, 15, y); y += 4;
-    doc.text(`Obra:      ${d.obra?.nombre || "-"}`, 15, y); y += 4;
-    doc.text(`Solicita:  ${d.operario}`, 15, y); y += 4;
-    doc.text(`Pedido ID: ${d.pedidoId}`, 15, y); y += 8;
-
-    const pintarLineas = (titulo, lineas, total, iva, formaPago) => {
-      if (!lineas || lineas.length === 0) return;
-      if (y > 240) { doc.addPage(); y = 20; }
-      doc.setFont("helvetica", "bold"); doc.setFontSize(11);
-      doc.text(titulo, 15, y); y += 5;
-      doc.setFillColor(230); doc.rect(15, y - 4, 180, 6, "F");
-      doc.setFont("helvetica", "bold"); doc.setFontSize(8);
-      doc.text("Cant", 17, y); doc.text("Ref", 32, y); doc.text("Descripcion", 60, y);
-      doc.text("P.unit", 152, y, { align: "right" }); doc.text("Importe", 192, y, { align: "right" }); y += 4;
-      doc.setFont("helvetica", "normal");
-      lineas.forEach(l => {
-        if (y > 270) { doc.addPage(); y = 20; }
-        const desc = (l.desc || "").length > 55 ? l.desc.substring(0, 53) + ".." : (l.desc || "");
-        doc.text(String(l.cantidad), 17, y); doc.text(String(l.ref || "-"), 32, y);
-        doc.text(desc, 60, y);
-        doc.text("EUR" + (l.precioUnit || 0).toFixed(2), 152, y, { align: "right" });
-        doc.text("EUR" + (l.importe || 0).toFixed(2), 192, y, { align: "right" }); y += 3.5;
-        if (l.metros || l.esMetrosSueltos) {
-          const nota = l.esMetrosSueltos ? ">> metros sueltos" : `>> ${l.cantidad} ${l.unidad} (${l.metros}m)`;
-          doc.setFont("helvetica", "italic"); doc.setFontSize(7); doc.setTextColor(100);
-          doc.text(nota, 62, y); y += 3.5;
-          doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(0);
-        }
-      });
-      y += 2; doc.line(120, y, 195, y); y += 4;
-      doc.setFont("helvetica", "normal"); doc.setFontSize(8);
-      doc.text(`Subtotal: EUR${total.toFixed(2)}`, 192, y, { align: "right" }); y += 4;
-      doc.text(`IVA 21%:  EUR${iva.toFixed(2)}`, 192, y, { align: "right" }); y += 4;
-      doc.setFont("helvetica", "bold");
-      doc.text(`TOTAL:    EUR${(total + iva).toFixed(2)}`, 192, y, { align: "right" }); y += 4;
-      if (formaPago) { doc.setFont("helvetica", "italic"); doc.setFontSize(7); doc.text(`Forma de pago: ${formaPago}`, 192, y, { align: "right" }); y += 6; }
-    };
-
-    if (esCompleto || prov === "aqua") pintarLineas(`LINEAS - ${provList.find(p=>p.id==="aqua")?.nombre?.toUpperCase()||"AQUATUBO"}`, d.lineasAqua, d.totalAqua, d.ivaAqua, provList.find(p=>p.id==="aqua")?.formaPago || "");
-    if (esCompleto || prov === "aram") pintarLineas(`LINEAS - ${provList.find(p=>p.id==="aram")?.nombre?.toUpperCase()||"ARAMBURU"}`, d.lineasAram, d.totalAram, d.ivaAram, provList.find(p=>p.id==="aram")?.formaPago || "");
-
-    if (notas) {
-      if (y > 240) { doc.addPage(); y = 20; }
-      doc.setFont("helvetica", "bold"); doc.setFontSize(11);
-      doc.text("NOTAS", 15, y); y += 5;
-      doc.setFont("helvetica", "normal"); doc.setFontSize(9);
-      doc.splitTextToSize(notas, 175).forEach(ln => { doc.text(ln, 15, y); y += 4; });
-    }
-
-    if (y > 250) { doc.addPage(); y = 20; }
-    doc.setFillColor(255, 200, 0); doc.rect(15, y, 180, 12, "F");
-    doc.setFont("helvetica", "bold"); doc.setFontSize(14);
-    doc.text(`TOTAL: EUR${((d.totalAqua + d.totalAram) * 1.21).toFixed(2)} IVA inc.`, 105, y + 8, { align: "center" });
-
-    doc.save(`Pedido_${d.pedidoId}_${prov.toUpperCase()}.pdf`);
-  };
-
-  const handleWA = (prov) => {
-    const d = buildDatos();
-    const lineas = prov === "aqua" ? d.lineasAqua : prov === "aram" ? d.lineasAram : [...d.lineasAqua, ...d.lineasAram];
-    const fecha = new Date(d.fechaIso).toLocaleDateString("es-ES");
-    let txt = `*PEDIDO ARA CORPORATE*\n`;
-    txt += `Obra: ${d.obra?.nombre}\nFecha: ${fecha}\nSolicita: ${d.operario}\n\n`;
-    lineas.forEach(l => { const mu = l.metros ? ` (${l.metros}m)` : ""; txt += `• ${l.cantidad} ${l.unidad}${mu} · ${l.desc} (ref ${l.ref}) — EUR${(l.importe||0).toFixed(2)}\n`; });
-    txt += `\nTOTAL: EUR${((d.totalAqua + d.totalAram) * 1.21).toFixed(2)} IVA inc.`;
-    if (notas) txt += `\n\nNotas: ${notas}`;
-    window.open(`https://wa.me/?text=${encodeURIComponent(txt)}`, "_blank");
-  };
-
-  const renderLineas = (prov, lineas) => {
-    const col = prov === "aqua" ? "emerald" : "amber";
-    const total = lineas.reduce((s, l) => s + (l.importe || 0), 0);
-    const nombre = getProvNombreLocal(prov);
-    return (
-      <div className={`border-2 border-${col}-700`}>
-        <div className={`bg-${col}-700 text-white p-2 text-xs font-bold tracking-widest flex justify-between`}>
-          <span>{nombre.toUpperCase()} · EUR{total.toFixed(2)}</span>
-        </div>
-        <div className="divide-y">
-          {lineas.map((l, i) => (
-            <div key={i} className="p-2 text-xs gap-2">
-              <div className="flex items-start gap-2">
-                <div className="flex-1">
-                  <div className="font-mono text-[10px] text-stone-500">{l.ref}</div>
-                  <div className="font-medium">{l.desc}</div>
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <input type="number" min="0" step="0.1" value={l.cantidad}
-                    onChange={(e) => updateLinea(prov, i, "cantidad", e.target.value)}
-                    className="w-14 border border-stone-400 p-1 text-xs text-center font-mono focus:outline-none focus:border-stone-900" />
-                  <span className="text-stone-500 text-[10px]">{l.unidad}</span>
-                  <span className="text-stone-500 text-[10px]">x</span>
-                  <input type="number" min="0" step="0.001" value={l.precioUnit}
-                    onChange={(e) => updateLinea(prov, i, "precioUnit", e.target.value)}
-                    className="w-16 border border-stone-400 p-1 text-xs text-center font-mono focus:outline-none focus:border-stone-900" />
-                  <span className="font-bold text-[10px] w-14 text-right">EUR{(l.importe||0).toFixed(2)}</span>
-                  <button onClick={() => removeLinea(prov, i)} className="text-red-600 hover:text-red-800 p-0.5">
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  };
+function ModalDetallePedido({ pedido, onCerrar }) {
+  const totA = (pedido.lineasAqua || []).reduce((s, l) => s + (l.importe || 0), 0);
+  const totR = (pedido.lineasAram || []).reduce((s, l) => s + (l.importe || 0), 0);
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div className="absolute inset-0 bg-stone-900/50" onClick={onCerrar} />
-      <div className="relative bg-white border-4 border-stone-900 w-full max-w-3xl max-h-[95vh] overflow-y-auto shadow-[8px_8px_0_0_rgba(0,0,0,1)]">
-        {/* Header */}
+      <div className="relative bg-white border-4 border-stone-900 w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-[8px_8px_0_0_rgba(0,0,0,1)]">
         <div className="bg-amber-500 border-b-4 border-stone-900 p-3 flex items-center justify-between sticky top-0 z-10">
           <div>
             <h3 className="font-black text-base" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
               PEDIDO {pedido.id}
             </h3>
-            <div className="text-[10px]">{new Date(pedido.fecha).toLocaleString("es-ES")} · {pedido.operario} · {pedido.obra?.nombre}</div>
+            <div className="text-[10px]">{new Date(pedido.fecha).toLocaleString("es-ES")}</div>
           </div>
           <button onClick={onCerrar} className="bg-stone-900 text-amber-400 p-1.5 border-2 border-stone-900">
             <X className="w-4 h-4" />
           </button>
         </div>
+        <div className="p-4 space-y-3 text-sm">
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <div><strong>Obra:</strong> {pedido.obra?.nombre}</div>
+            <div><strong>Solicita:</strong> {pedido.operario}</div>
+            <div className="col-span-2 text-[10px] text-stone-500">{pedido.obra?.dir}</div>
+          </div>
 
-        <div className="p-4 space-y-3">
-          {/* Líneas por proveedor */}
-          {renderLineas("aqua", lineasAqua)}
-          {renderLineas("aram", lineasAram)}
-
-          {/* No listados */}
-          {lineasNoList.length > 0 && (
-            <div className="border-2 border-stone-700 bg-stone-50">
-              <div className="bg-stone-700 text-white p-2 text-xs font-bold tracking-widest">PRODUCTOS NO LISTADOS</div>
+          {pedido.lineasAqua?.length > 0 && (
+            <div className="border-2 border-emerald-700">
+              <div className="bg-emerald-700 text-white p-2 text-xs font-bold tracking-widest">AQUATUBO · €{totA.toFixed(2)}</div>
               <div className="divide-y">
-                {lineasNoList.map((l, i) => (
-                  <div key={i} className="p-2 text-xs flex items-center justify-between gap-2">
-                    <div>{l.cantidad} {l.unidad} · {l.desc}</div>
-                    <button onClick={() => setLineasNoList(prev => prev.filter((_,j)=>j!==i))} className="text-red-600"><X className="w-3 h-3" /></button>
+                {pedido.lineasAqua.map((l, i) => (
+                  <div key={i} className="p-2 text-xs flex justify-between gap-2">
+                    <div className="flex-1">
+                      <div className="font-mono text-[10px] text-stone-500">{l.ref}</div>
+                      <div>{l.desc}</div>
+                    </div>
+                    <div className="text-right shrink-0 font-mono">
+                      <div>{l.cantidad} × €{l.precioUnit?.toFixed(2)}</div>
+                      <div className="font-bold">€{l.importe?.toFixed(2)}</div>
+                    </div>
                   </div>
                 ))}
               </div>
             </div>
           )}
 
-          {/* Notas */}
-          <div>
-            <label className="text-[10px] font-bold text-stone-600 tracking-widest mb-1 block">NOTAS</label>
-            <textarea value={notas} onChange={(e) => setNotas(e.target.value)} rows={2}
-              className="w-full border-2 border-stone-900 p-2 text-sm focus:outline-none focus:bg-amber-50 font-mono resize-none" />
-          </div>
-
-          {/* Añadir del catálogo */}
-          <div className="border-2 border-stone-300 bg-stone-50 p-3">
-            <div className="text-[10px] font-bold text-stone-600 tracking-widest mb-2">+ AÑADIR DEL CATÁLOGO</div>
-            <div className="flex gap-2 mb-2">
-              <select value={provBuscador} onChange={(e) => setProvBuscador(e.target.value)}
-                      className="border-2 border-stone-900 p-1.5 text-xs font-mono focus:outline-none">
-                {provList.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
-              </select>
-              <input type="text" placeholder="Buscar producto..." value={busqueda}
-                onChange={(e) => { setBusqueda(e.target.value); setMostrarBuscador(true); }}
-                onFocus={() => setMostrarBuscador(true)}
-                className="flex-1 border-2 border-stone-900 p-1.5 text-xs font-mono focus:outline-none focus:bg-amber-50" />
-            </div>
-            {mostrarBuscador && productosFiltrados.length > 0 && (
-              <div className="border-2 border-stone-900 bg-white divide-y max-h-48 overflow-y-auto">
-                {productosFiltrados.map(p => (
-                  <button key={p.id} onClick={() => addFromCatalog(p)}
-                    className="w-full text-left p-2 text-xs hover:bg-amber-50 flex justify-between gap-2">
-                    <div>
-                      <div className="font-mono text-[10px] text-stone-500">{p.proveedores?.[provBuscador]?.ref || "—"}</div>
-                      <div>{p.desc}</div>
+          {pedido.lineasAram?.length > 0 && (
+            <div className="border-2 border-amber-700">
+              <div className="bg-amber-700 text-white p-2 text-xs font-bold tracking-widest">ARAMBURU · €{totR.toFixed(2)}</div>
+              <div className="divide-y">
+                {pedido.lineasAram.map((l, i) => (
+                  <div key={i} className="p-2 text-xs flex justify-between gap-2">
+                    <div className="flex-1">
+                      <div className="font-mono text-[10px] text-stone-500">{l.ref}</div>
+                      <div>{l.desc}</div>
                     </div>
-                    <div className="font-bold shrink-0">
-                      {p.proveedores?.[provBuscador] ? `EUR${precioNeto(p.proveedores[provBuscador]).toFixed(2)}/${p.unidad}` : "Sin precio"}
+                    <div className="text-right shrink-0 font-mono">
+                      <div>{l.cantidad} × €{l.precioUnit?.toFixed(2)}</div>
+                      <div className="font-bold">€{l.importe?.toFixed(2)}</div>
                     </div>
-                  </button>
+                  </div>
                 ))}
-              </div>
-            )}
-          </div>
-
-          {/* Añadir manual */}
-          {!añadirManual ? (
-            <button onClick={() => setAñadirManual(true)}
-              className="w-full border-2 border-dashed border-stone-400 p-2 text-xs font-bold text-stone-500 hover:border-stone-900 hover:text-stone-900">
-              + AÑADIR LÍNEA MANUAL
-            </button>
-          ) : (
-            <div className="border-2 border-stone-900 bg-stone-50 p-3 space-y-2">
-              <div className="text-[10px] font-bold text-stone-600 tracking-widest">LÍNEA MANUAL</div>
-              <input type="text" placeholder="Descripción" value={manual.desc}
-                onChange={(e) => setManual(m => ({...m, desc: e.target.value}))}
-                className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:outline-none focus:bg-amber-50" />
-              <div className="grid grid-cols-4 gap-2">
-                <div>
-                  <label className="text-[9px] font-bold text-stone-600">CANT</label>
-                  <input type="number" value={manual.cantidad} min="0"
-                    onChange={(e) => setManual(m => ({...m, cantidad: e.target.value}))}
-                    className="w-full border-2 border-stone-900 p-1.5 text-xs font-mono focus:outline-none" />
-                </div>
-                <div>
-                  <label className="text-[9px] font-bold text-stone-600">UNIDAD</label>
-                  <select value={manual.unidad} onChange={(e) => setManual(m => ({...m, unidad: e.target.value}))}
-                    className="w-full border-2 border-stone-900 p-1.5 text-xs font-mono focus:outline-none">
-                    {["uni","m","rollo","barra","kg","L","caja"].map(u => <option key={u} value={u}>{u}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-[9px] font-bold text-stone-600">PRECIO</label>
-                  <input type="number" step="0.001" placeholder="0.00" value={manual.precioUnit}
-                    onChange={(e) => setManual(m => ({...m, precioUnit: e.target.value}))}
-                    className="w-full border-2 border-stone-900 p-1.5 text-xs font-mono focus:outline-none" />
-                </div>
-                <div>
-                  <label className="text-[9px] font-bold text-stone-600">PROVEEDOR</label>
-                  <select value={manual.prov} onChange={(e) => setManual(m => ({...m, prov: e.target.value}))}
-                    className="w-full border-2 border-stone-900 p-1.5 text-xs font-mono focus:outline-none">
-                    {provList.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
-                  </select>
-                </div>
-              </div>
-              <div className="flex gap-2">
-                <button onClick={addManual} className="px-3 py-1.5 text-xs font-black bg-stone-900 text-amber-400 border-2 border-stone-900 hover:bg-amber-400 hover:text-stone-900">+ AÑADIR</button>
-                <button onClick={() => setAñadirManual(false)} className="px-3 py-1.5 text-xs font-bold border-2 border-stone-900 bg-white hover:bg-stone-100">CANCELAR</button>
               </div>
             </div>
           )}
 
-          {/* Total */}
+          {pedido.lineasNoListado?.length > 0 && (
+            <div className="border-2 border-stone-700 bg-stone-50">
+              <div className="bg-stone-700 text-white p-2 text-xs font-bold tracking-widest">PRODUCTOS NO LISTADOS</div>
+              <div className="divide-y">
+                {pedido.lineasNoListado.map((l, i) => (
+                  <div key={i} className="p-2 text-xs">
+                    <div>{l.cantidad} {l.unidad} · {l.desc}</div>
+                    {l.proveedor !== "indistinto" && <div className="text-[10px] text-stone-500">prov: {l.proveedor === "aqua" ? "Aquatubo" : "Aramburu"}</div>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {pedido.notas && (
+            <div className="border-2 border-stone-300 bg-amber-50 p-2 text-xs">
+              <div className="font-bold mb-1">📝 Notas:</div>
+              <div className="whitespace-pre-wrap">{pedido.notas}</div>
+            </div>
+          )}
+
           <div className="bg-stone-900 text-amber-400 p-3 flex justify-between items-baseline">
             <div className="text-xs tracking-widest">TOTAL c/IVA</div>
             <div className="font-black text-2xl" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
-              EUR{((totA + totR) * 1.21).toFixed(2)}
+              €{((totA + totR) * 1.21).toFixed(2)}
             </div>
           </div>
 
-          {/* PDF y WhatsApp */}
-          <div className="text-[10px] font-bold text-stone-500 tracking-widest pt-1">DESCARGAR PDF</div>
-          <div className="grid grid-cols-3 gap-2">
-            <button onClick={() => handlePDF("aqua")} className="bg-stone-900 text-amber-400 p-2 text-[10px] font-black tracking-widest border-2 border-stone-900 hover:bg-amber-400 hover:text-stone-900">AQUATUBO</button>
-            <button onClick={() => handlePDF("aram")} className="bg-stone-700 text-amber-400 p-2 text-[10px] font-black tracking-widest border-2 border-stone-900 hover:bg-amber-400 hover:text-stone-900">ARAMBURU</button>
-            <button onClick={() => handlePDF("completo")} className="bg-amber-500 text-stone-900 p-2 text-[10px] font-black tracking-widest border-2 border-stone-900 hover:bg-amber-400">COMPLETO</button>
-          </div>
-          <div className="text-[10px] font-bold text-stone-500 tracking-widest">ENVIAR POR WHATSAPP</div>
-          <div className="grid grid-cols-3 gap-2">
-            <button onClick={() => handleWA("aqua")} className="bg-emerald-700 text-white p-2 text-[10px] font-black tracking-widest border-2 border-stone-900 hover:bg-emerald-800">AQUATUBO</button>
-            <button onClick={() => handleWA("aram")} className="bg-amber-700 text-white p-2 text-[10px] font-black tracking-widest border-2 border-stone-900 hover:bg-amber-800">ARAMBURU</button>
-            <button onClick={() => handleWA("completo")} className="bg-amber-500 text-stone-900 p-2 text-[10px] font-black tracking-widest border-2 border-stone-900 hover:bg-amber-400">COMPLETO</button>
-          </div>
-
-          {/* Guardar */}
-          <div className="flex gap-2 pt-2 border-t-2 border-stone-200">
-            <button onClick={onCerrar} className="flex-1 text-xs font-bold p-3 border-2 border-stone-900 bg-white hover:bg-stone-100">CANCELAR</button>
-            <button onClick={handleGuardar} disabled={guardando}
-              className={`flex-[2] text-xs font-black tracking-widest p-3 border-2 border-stone-900 ${guardando ? "bg-stone-300 cursor-wait" : "bg-stone-900 text-amber-400 hover:bg-amber-400 hover:text-stone-900"}`}
-              style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
-              {guardando ? "GUARDANDO..." : "GUARDAR CAMBIOS"}
-            </button>
-          </div>
+          {pedido.proveedoresEnviados?.length > 0 && (
+            <div className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-700 p-2">
+              📧 Email enviado a: {pedido.proveedoresEnviados.join(", ")}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -5352,6 +5079,365 @@ function PestañaProveedores({ data, api, reload }) {
     </div>
   );
 }
+
+// =========================================================
+//  PESTAÑA FACTURAS
+// =========================================================
+function PestañaFacturas({ api, pin }) {
+  const [facturas, setFacturas] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [subiendo, setSubiendo] = useState(false);
+  const [facturaAbierta, setFacturaAbierta] = useState(null);
+  const fileRef = useRef(null);
+  const FAC_URL = "https://araujo-bot.onrender.com/api/facturas";
+
+  const cargar = async () => {
+    setCargando(true);
+    try {
+      const r = await fetch(FAC_URL + "/lista", { headers: { "x-admin-pin": pin } });
+      setFacturas(await r.json());
+    } catch { } finally { setCargando(false); }
+  };
+
+  useEffect(() => { cargar(); }, []);
+
+  const handleSubir = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setSubiendo(true);
+    try {
+      const form = new FormData();
+      form.append("factura", file);
+      const r = await fetch(FAC_URL + "/subir", { method: "POST", headers: { "x-admin-pin": pin }, body: form });
+      const data = await r.json();
+      if (!data.ok) throw new Error(data.error);
+      await cargar();
+      // Abrir directamente para extraer
+      setFacturaAbierta(data.factura);
+    } catch (e) { alert("Error subiendo: " + e.message); }
+    finally { setSubiendo(false); if (fileRef.current) fileRef.current.value = ""; }
+  };
+
+  const handleEliminar = async (id) => {
+    if (!confirm("¿Eliminar esta factura?")) return;
+    await fetch(FAC_URL + "/factura/" + id, { method: "DELETE", headers: { "x-admin-pin": pin } });
+    cargar();
+  };
+
+  const estadoColor = { pendiente_extraccion: "bg-stone-200 text-stone-700", extrayendo: "bg-blue-200 text-blue-800", pendiente_revision: "bg-amber-200 text-amber-800", completado: "bg-emerald-200 text-emerald-800", error: "bg-red-200 text-red-800" };
+  const estadoLabel = { pendiente_extraccion: "Sin extraer", extrayendo: "Extrayendo...", pendiente_revision: "Pendiente revisión", completado: "Completado", error: "Error" };
+
+  return (
+    <div className="space-y-4">
+      {/* Subir factura */}
+      <div className="bg-white border-2 border-stone-900 p-4">
+        <div className="text-[10px] tracking-widest font-bold text-stone-700 mb-3">IMPORTAR FACTURA</div>
+        <p className="text-xs text-stone-600 mb-3">Sube una factura en PDF, JPG o PNG. La IA extraerá automáticamente los productos y precios para revisión.</p>
+        <input ref={fileRef} type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" onChange={handleSubir} className="hidden" />
+        <button onClick={() => fileRef.current?.click()} disabled={subiendo}
+                className={`w-full p-4 font-black text-sm tracking-widest border-2 border-stone-900 transition-all ${subiendo ? "bg-stone-300 cursor-wait" : "bg-stone-900 text-amber-400 hover:bg-amber-400 hover:text-stone-900"}`}
+                style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+          {subiendo ? "⏳ SUBIENDO..." : "📄 SUBIR FACTURA"}
+        </button>
+      </div>
+
+      {/* Lista de facturas */}
+      <div className="bg-white border-2 border-stone-900">
+        <div className="bg-stone-900 text-amber-400 p-2 text-[10px] font-bold tracking-widest">FACTURAS IMPORTADAS ({facturas.length})</div>
+        {cargando ? (
+          <div className="p-8 text-center text-stone-500 text-sm">Cargando...</div>
+        ) : facturas.length === 0 ? (
+          <div className="p-8 text-center text-stone-500 text-sm">No hay facturas importadas aún</div>
+        ) : (
+          <div className="divide-y divide-stone-200">
+            {facturas.map(f => (
+              <div key={f.id} className="p-3 hover:bg-amber-50 flex items-center gap-3">
+                <div className="text-2xl">📄</div>
+                <div className="flex-1 min-w-0">
+                  <div className="font-bold text-sm truncate">{f.archivoOriginal}</div>
+                  <div className="text-[10px] text-stone-500">
+                    {new Date(f.fechaSubida).toLocaleString("es-ES")}
+                    {f.datosExtraidos?.proveedor && <span className="ml-2 font-bold">{f.datosExtraidos.proveedor}</span>}
+                    {f.datosExtraidos?.numero_factura && <span className="ml-2">Fac. {f.datosExtraidos.numero_factura}</span>}
+                  </div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className={`text-[9px] px-1.5 py-0.5 font-bold rounded-sm ${estadoColor[f.estado] || "bg-stone-200"}`}>
+                      {estadoLabel[f.estado] || f.estado}
+                    </span>
+                    {f.resumen && (
+                      <span className="text-[9px] text-stone-500">
+                        {f.resumen.actualizados} actualizados · {f.resumen.nuevos} nuevos · {f.resumen.ignorados} ignorados
+                      </span>
+                    )}
+                    {f.lineasRevision?.length > 0 && (
+                      <span className="text-[9px] text-stone-500">{f.lineasRevision.length} líneas</span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex gap-1 shrink-0">
+                  <button onClick={() => setFacturaAbierta(f)}
+                          className="text-[10px] font-bold bg-amber-500 text-stone-900 px-2 py-1 border border-stone-900 hover:bg-amber-400">
+                    {f.estado === "pendiente_extraccion" ? "EXTRAER" : "VER"}
+                  </button>
+                  <button onClick={() => handleEliminar(f.id)}
+                          className="text-[10px] font-bold bg-red-600 text-white px-2 py-1 border border-stone-900 hover:bg-red-700">
+                    🗑
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {facturaAbierta && (
+        <ModalRevisionFactura
+          factura={facturaAbierta}
+          pin={pin}
+          onCerrar={() => { setFacturaAbierta(null); cargar(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
+  const [factura, setFactura] = useState(facturaInicial);
+  const [extrayendo, setExtrayendo] = useState(false);
+  const [confirmando, setConfirmando] = useState(false);
+  const [busquedas, setBusquedas] = useState({});
+  const FAC_URL = "https://araujo-bot.onrender.com/api/facturas";
+
+  const recargar = async () => {
+    const r = await fetch(FAC_URL + "/ver/" + factura.id, { headers: { "x-admin-pin": pin } });
+    setFactura(await r.json());
+  };
+
+  const handleExtraer = async () => {
+    setExtrayendo(true);
+    try {
+      const r = await fetch(FAC_URL + "/extraer/" + factura.id, { method: "POST", headers: { "x-admin-pin": pin } });
+      const data = await r.json();
+      if (!data.ok) throw new Error(data.error);
+      setFactura(data.factura);
+    } catch (e) { alert("Error extrayendo: " + e.message); }
+    finally { setExtrayendo(false); }
+  };
+
+  const updateLinea = async (idx, changes) => {
+    await fetch(FAC_URL + "/linea/" + factura.id + "/" + idx, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "x-admin-pin": pin },
+      body: JSON.stringify(changes)
+    });
+    recargar();
+  };
+
+  const handleConfirmar = async () => {
+    if (!confirm("¿Aplicar todos los cambios confirmados al catálogo?")) return;
+    setConfirmando(true);
+    try {
+      const r = await fetch(FAC_URL + "/confirmar/" + factura.id, { method: "POST", headers: { "x-admin-pin": pin } });
+      const data = await r.json();
+      if (!data.ok) throw new Error(data.error);
+      alert(`✅ Aplicado: ${data.actualizados} precios actualizados, ${data.nuevos} productos nuevos, ${data.ignorados} ignorados`);
+      recargar();
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setConfirmando(false); }
+  };
+
+  const confianzaColor = (c) => c >= 90 ? "text-emerald-700 font-bold" : c >= 70 ? "text-amber-700 font-bold" : "text-red-700 font-bold";
+  const estadoBtn = (linea, estado) => linea.estado === estado
+    ? "bg-stone-900 text-amber-400 border-stone-900"
+    : "bg-white text-stone-700 border-stone-300 hover:border-stone-900";
+
+  const lineas = factura.lineasRevision || [];
+  const pendientes = lineas.filter(l => l.estado === "pendiente").length;
+  const confirmadas = lineas.filter(l => l.estado === "confirmado").length;
+  const nuevas = lineas.filter(l => l.estado === "nuevo").length;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="absolute inset-0 bg-stone-900/50" onClick={onCerrar} />
+      <div className="relative bg-white border-4 border-stone-900 w-full max-w-4xl max-h-[95vh] overflow-y-auto shadow-[8px_8px_0_0_rgba(0,0,0,1)]">
+        {/* Header */}
+        <div className="bg-amber-500 border-b-4 border-stone-900 p-3 flex items-center justify-between sticky top-0 z-10">
+          <div>
+            <h3 className="font-black text-base" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+              🧾 {factura.archivoOriginal}
+            </h3>
+            <div className="text-[10px]">
+              {factura.datosExtraidos?.proveedor && <span className="font-bold">{factura.datosExtraidos.proveedor}</span>}
+              {factura.datosExtraidos?.numero_factura && <span className="ml-2">Fac. {factura.datosExtraidos.numero_factura}</span>}
+              {factura.datosExtraidos?.fecha && <span className="ml-2">{factura.datosExtraidos.fecha}</span>}
+              {factura.datosExtraidos?.total && <span className="ml-2 font-bold">Total: €{factura.datosExtraidos.total}</span>}
+            </div>
+          </div>
+          <button onClick={onCerrar} className="bg-stone-900 text-amber-400 p-1.5 border-2 border-stone-900">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="p-4 space-y-4">
+          {/* Sin extraer */}
+          {factura.estado === "pendiente_extraccion" && (
+            <div className="text-center py-8">
+              <div className="text-stone-500 mb-4">La factura aún no ha sido procesada por la IA</div>
+              <button onClick={handleExtraer} disabled={extrayendo}
+                      className={`px-8 py-4 font-black text-sm tracking-widest border-2 border-stone-900 ${extrayendo ? "bg-stone-300 cursor-wait" : "bg-stone-900 text-amber-400 hover:bg-amber-400 hover:text-stone-900"}`}
+                      style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+                {extrayendo ? "⏳ EXTRAYENDO CON IA..." : "🤖 EXTRAER CON IA"}
+              </button>
+            </div>
+          )}
+
+          {/* Extrayendo */}
+          {factura.estado === "extrayendo" && (
+            <div className="text-center py-8">
+              <div className="text-stone-500">La IA está analizando la factura...</div>
+            </div>
+          )}
+
+          {/* Error */}
+          {factura.estado === "error" && (
+            <div className="bg-red-50 border-2 border-red-700 p-4">
+              <div className="font-bold text-red-700 mb-2">Error al extraer</div>
+              <div className="text-xs text-red-600">{factura.errorMsg}</div>
+              <button onClick={handleExtraer} className="mt-3 px-4 py-2 text-xs font-bold bg-red-700 text-white border-2 border-stone-900">
+                REINTENTAR
+              </button>
+            </div>
+          )}
+
+          {/* Revisión */}
+          {(factura.estado === "pendiente_revision" || factura.estado === "completado") && lineas.length > 0 && (
+            <>
+              {/* Stats */}
+              <div className="grid grid-cols-4 gap-2 text-center">
+                {[
+                  { label: "TOTAL", val: lineas.length, color: "bg-stone-900 text-amber-400" },
+                  { label: "PENDIENTES", val: pendientes, color: "bg-amber-100 text-amber-800" },
+                  { label: "CONFIRMADAS", val: confirmadas, color: "bg-emerald-100 text-emerald-800" },
+                  { label: "NUEVAS", val: nuevas, color: "bg-blue-100 text-blue-800" },
+                ].map(s => (
+                  <div key={s.label} className={`p-2 border-2 border-stone-900 ${s.color}`}>
+                    <div className="font-black text-xl">{s.val}</div>
+                    <div className="text-[9px] font-bold tracking-widest">{s.label}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Líneas */}
+              <div className="space-y-2">
+                {lineas.map((linea, idx) => (
+                  <div key={idx} className={`border-2 border-stone-900 ${linea.estado === "ignorado" ? "opacity-40" : ""}`}>
+                    {/* Cabecera línea */}
+                    <div className="bg-stone-100 p-2 flex items-start gap-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="font-mono text-[10px] text-stone-500">{linea.lineaOriginal.referencia_proveedor}</div>
+                        <div className="font-bold text-sm">{linea.lineaOriginal.descripcion_original}</div>
+                        <div className="text-[10px] text-stone-600">
+                          {linea.lineaOriginal.cantidad} {linea.lineaOriginal.unidad} ×
+                          €{linea.lineaOriginal.precio_unitario?.toFixed(3)} =
+                          <span className="font-bold"> €{linea.lineaOriginal.importe_linea?.toFixed(2)}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Producto sugerido */}
+                    <div className="p-2 space-y-2">
+                      {linea.productoSugerido && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-stone-500">Sugerido:</span>
+                          <span className="text-xs font-bold flex-1">
+                            {CATALOGO.find(p => p.id === linea.productoSugerido)?.desc || linea.productoSugerido}
+                          </span>
+                          <span className={`text-[10px] ${confianzaColor(linea.confianza)}`}>
+                            {linea.confianza}% {linea.aprendida ? "✓ aprendido" : ""}
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Precio editable */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-stone-500">Precio neto:</span>
+                        <input type="number" step="0.001" value={linea.precioUnitarioNeto || ""}
+                          onChange={(e) => updateLinea(idx, { precioUnitarioNeto: parseFloat(e.target.value) })}
+                          className="w-24 border border-stone-400 p-1 text-xs font-mono text-center focus:outline-none focus:border-stone-900" />
+                        <span className="text-[10px] text-stone-500">€/{linea.lineaOriginal.unidad}</span>
+                      </div>
+
+                      {/* Botones de acción */}
+                      <div className="flex gap-1 flex-wrap">
+                        {[
+                          { key: "confirmado", label: "✓ CONFIRMAR" },
+                          { key: "nuevo",      label: "+ CREAR NUEVO" },
+                          { key: "ignorado",   label: "✕ IGNORAR" },
+                        ].map(btn => (
+                          <button key={btn.key}
+                            onClick={() => updateLinea(idx, { estado: btn.key })}
+                            className={`px-2 py-1 text-[10px] font-bold border ${estadoBtn(linea, btn.key)}`}>
+                            {btn.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Sugerencias alternativas */}
+                      {linea.sugerencias?.length > 1 && linea.estado !== "ignorado" && (
+                        <div className="text-[10px] text-stone-500">
+                          Otras opciones:
+                          {linea.sugerencias.slice(1).map(s => (
+                            <button key={s.id}
+                              onClick={() => updateLinea(idx, { productoSugerido: s.id, confianza: s.confianza, estado: "confirmado" })}
+                              className="ml-2 underline text-stone-700 hover:text-stone-900">
+                              {s.desc} ({s.confianza}%)
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Campos para producto nuevo */}
+                      {linea.estado === "nuevo" && (
+                        <div className="grid grid-cols-2 gap-2 bg-blue-50 p-2 border border-blue-300">
+                          <div>
+                            <label className="text-[9px] font-bold text-stone-600">DESCRIPCIÓN ESTÁNDAR</label>
+                            <input type="text" defaultValue={linea.descripcionPersonalizada || linea.lineaOriginal.descripcion_original}
+                              onBlur={(e) => updateLinea(idx, { descripcionPersonalizada: e.target.value })}
+                              className="w-full border border-stone-400 p-1 text-xs font-mono focus:outline-none" />
+                          </div>
+                          <div>
+                            <label className="text-[9px] font-bold text-stone-600">FAMILIA</label>
+                            <select defaultValue={linea.familiaPersonalizada || "Varios"}
+                              onChange={(e) => updateLinea(idx, { familiaPersonalizada: e.target.value })}
+                              className="w-full border border-stone-400 p-1 text-xs font-mono focus:outline-none">
+                              {FAMILIAS.filter(f => f.nombre !== "Todo").map(f => (
+                                <option key={f.nombre} value={f.nombre}>{f.nombre}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Botón confirmar todo */}
+              {factura.estado === "pendiente_revision" && (
+                <button onClick={handleConfirmar} disabled={confirmando}
+                        className={`w-full p-4 font-black text-sm tracking-widest border-2 border-stone-900 ${confirmando ? "bg-stone-300 cursor-wait" : "bg-emerald-700 text-white hover:bg-emerald-800"}`}
+                        style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+                  {confirmando ? "APLICANDO..." : "✓ APLICAR AL CATÁLOGO"}
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 // =========================================================
 //  PESTAÑA CONFIG
