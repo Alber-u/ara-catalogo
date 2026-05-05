@@ -5348,7 +5348,7 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
                     {/* Producto sugerido */}
                     <div className="p-2 space-y-2">
                       {linea.productoSugerido && (
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-[10px] text-stone-500">Sugerido:</span>
                           <span className="text-xs font-bold flex-1">
                             {CATALOGO.find(p => p.id === linea.productoSugerido)?.desc || linea.productoSugerido}
@@ -5356,16 +5356,40 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
                           <span className={`text-[10px] ${confianzaColor(linea.confianza)}`}>
                             {linea.confianza}% {linea.aprendida ? "✓ aprendido" : ""}
                           </span>
+                          {linea.tieneEnCatalogo && (
+                            <span className="text-[9px] bg-blue-100 text-blue-800 px-1.5 py-0.5 font-bold">YA EN CATÁLOGO</span>
+                          )}
                         </div>
                       )}
 
-                      {/* Precio editable */}
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-stone-500">Precio neto:</span>
-                        <input type="number" step="0.001" value={linea.precioUnitarioNeto || ""}
-                          onChange={(e) => updateLinea(idx, { precioUnitarioNeto: parseFloat(e.target.value) })}
-                          className="w-24 border border-stone-400 p-1 text-xs font-mono text-center focus:outline-none focus:border-stone-900" />
-                        <span className="text-[10px] text-stone-500">€/{linea.lineaOriginal.unidad}</span>
+                      {/* Comparativa de precio */}
+                      <div className="bg-stone-50 border border-stone-200 p-2 rounded-sm space-y-1">
+                        <div className="flex items-center gap-3 flex-wrap text-[10px]">
+                          <span className="text-stone-500">Bruto: <span className="font-mono font-bold text-stone-800">€{(linea.precioUnitarioBruto||0).toFixed(3)}</span></span>
+                          {linea.descuento > 0 && <span className="text-stone-500">Dto: <span className="font-bold text-amber-700">{linea.descuento}%</span></span>}
+                          <span className="text-stone-500">Neto: <span className="font-mono font-bold text-stone-900">€{(linea.precioUnitarioNeto||0).toFixed(4)}</span></span>
+                          {linea.precioActual !== null && (
+                            <span className="text-stone-500">
+                              Actual: <span className="font-mono font-bold">€{linea.precioActual.toFixed(4)}</span>
+                              {linea.variacionPrecio && linea.variacionPrecio.pct !== 0 && (
+                                <span className={`ml-1 font-bold ${linea.variacionPrecio.sube ? "text-red-600" : "text-emerald-600"}`}>
+                                  {linea.variacionPrecio.sube ? "▲" : "▼"} {Math.abs(linea.variacionPrecio.pct)}%
+                                  {" "}(€{Math.abs(linea.variacionPrecio.diff).toFixed(4)})
+                                </span>
+                              )}
+                              {linea.variacionPrecio && linea.variacionPrecio.pct === 0 && (
+                                <span className="ml-1 text-stone-400">= sin cambio</span>
+                              )}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-stone-500">Precio a guardar:</span>
+                          <input type="number" step="0.0001" value={linea.precioUnitarioNeto || ""}
+                            onChange={(e) => updateLinea(idx, { precioUnitarioNeto: parseFloat(e.target.value) })}
+                            className="w-24 border border-stone-400 p-1 text-xs font-mono text-center focus:outline-none focus:border-stone-900" />
+                          <span className="text-[10px] text-stone-500">€/{linea.lineaOriginal.unidad}</span>
+                        </div>
                       </div>
 
                       {/* Botones de acción */}
