@@ -5091,6 +5091,7 @@ function PestañaFacturas({ api, pin }) {
   const [busqueda, setBusqueda] = useState("");
   const [filtroProveedor, setFiltroProveedor] = useState("todos");
   const [filtroEstado, setFiltroEstado] = useState("todos");
+  const [mostrarAnalisis, setMostrarAnalisis] = useState(false);
   const fileRef = useRef(null);
   const FAC_URL = "https://araujo-bot.onrender.com/api/facturas";
 
@@ -5272,6 +5273,7 @@ function PestañaFacturas({ api, pin }) {
               ? `MOSTRANDO ${facturasFiltradas.length} de ${facturas.length}`
               : `FACTURAS IMPORTADAS (${facturas.length})`}
           </span>
+          <div className="flex items-center gap-3 flex-wrap">
           {(() => {
             // Impacto agregado de las facturas filtradas
             let totalSube = 0, totalBaja = 0, nFactImpacto = 0, totalFacturado = 0;
@@ -5314,6 +5316,15 @@ function PestañaFacturas({ api, pin }) {
               </span>
             );
           })()}
+          {facturasFiltradas.some(f => (f.lineasRevision || []).some(l => l.variacionPrecio)) && (
+            <button
+              onClick={() => setMostrarAnalisis(true)}
+              title="Análisis transversal: ve qué productos te están subiendo en TODAS las facturas"
+              className="bg-amber-400 text-stone-900 px-3 py-1 text-[10px] font-black tracking-widest border border-amber-300 hover:bg-amber-300">
+              📊 ANÁLISIS POR PRODUCTO
+            </button>
+          )}
+          </div>
         </div>
         {cargando ? (
           <div className="p-8 text-center text-stone-500 text-sm">Cargando...</div>
@@ -5425,6 +5436,426 @@ function PestañaFacturas({ api, pin }) {
           onCerrar={() => { setFacturaAbierta(null); cargar(); }}
         />
       )}
+
+      {mostrarAnalisis && (() => {
+        // Recalcular facturas filtradas para el modal
+        const q = busqueda.toLowerCase().trim();
+        const facturasParaAnalisis = facturas.filter(f => {
+          if (filtroEstado !== "todos" && f.estado !== filtroEstado) return false;
+          if (filtroProveedor !== "todos" && f.datosExtraidos?.proveedor !== filtroProveedor) return false;
+          if (q) {
+            const enNombre = (f.archivoOriginal || "").toLowerCase().includes(q);
+            const enProv = (f.datosExtraidos?.proveedor || "").toLowerCase().includes(q);
+            const enNum = (f.datosExtraidos?.numero_factura || "").toLowerCase().includes(q);
+            if (!enNombre && !enProv && !enNum) return false;
+          }
+          return true;
+        });
+        return (
+          <ModalAnalisisProductos
+            facturas={facturasParaAnalisis}
+            filtrosActivos={{ busqueda, proveedor: filtroProveedor, estado: filtroEstado }}
+            onCerrar={() => setMostrarAnalisis(false)}
+            onAbrirFactura={(f) => { setMostrarAnalisis(false); setFacturaAbierta(f); }}
+          />
+        );
+      })()}
+    </div>
+  );
+}
+
+function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFactura }) {
+  const [orden, setOrden] = useState("impacto"); // impacto | frecuencia | pct
+  const [filtroDireccion, setFiltroDireccion] = useState("todos"); // todos | sube | baja
+  const [busquedaProd, setBusquedaProd] = useState("");
+  const [productoExpandido, setProductoExpandido] = useState(null);
+
+  // Agregar líneas por productoSugerido (id del catálogo) o por descripción si no hay match
+  const agregado = useMemo(() => {
+    const mapa = new Map(); // key → { id, desc, ref, apariciones: [] }
+    facturas.forEach(f => {
+      (f.lineasRevision || []).forEach(l => {
+        if (!l.variacionPrecio) return;
+        // Clave de agregación: id del producto del catálogo si existe, si no la referencia del proveedor
+        const key = l.productoSugerido || `ref:${l.lineaOriginal?.referencia_proveedor || ""}|desc:${(l.lineaOriginal?.descripcion_original || "").substring(0, 40)}`;
+        if (!mapa.has(key)) {
+          const prodCat = l.productoSugerido ? CATALOGO.find(p => p.id === l.productoSugerido) : null;
+          mapa.set(key, {
+            key,
+            id: l.productoSugerido,
+            descCat: prodCat?.desc || null,
+            descFact: l.lineaOriginal?.descripcion_original || "",
+            ref: l.lineaOriginal?.referencia_proveedor || "",
+            unidad: l.lineaOriginal?.unidad || "uni",
+            apariciones: []
+          });
+        }
+        const cant = parseFloat(l.lineaOriginal?.cantidad) || 0;
+        const impacto = (l.variacionPrecio.diff || 0) * cant;
+        mapa.get(key).apariciones.push({
+          facturaId: f.id,
+          facturaNombre: f.archivoOriginal,
+          numFact: f.datosExtraidos?.numero_factura || "",
+          fecha: f.datosExtraidos?.fecha || f.fechaSubida,
+          proveedor: f.datosExtraidos?.proveedor || "",
+          cantidad: cant,
+          precioActual: l.precioActual,
+          precioFactura: l.precioUnitarioNeto,
+          diff: l.variacionPrecio.diff,
+          pct: l.variacionPrecio.pct,
+          sube: l.variacionPrecio.sube,
+          baja: l.variacionPrecio.baja,
+          impacto,
+          estado: l.estado
+        });
+      });
+    });
+    // Calcular agregados por producto
+    const lista = Array.from(mapa.values()).map(p => {
+      const aps = p.apariciones;
+      const impactoTotal = aps.reduce((acc, a) => acc + a.impacto, 0);
+      const subidas = aps.filter(a => a.sube).length;
+      const bajadas = aps.filter(a => a.baja).length;
+      const cantTotal = aps.reduce((acc, a) => acc + a.cantidad, 0);
+      const diffPromedio = aps.reduce((acc, a) => acc + a.diff, 0) / aps.length;
+      const pctPromedio = aps.reduce((acc, a) => acc + a.pct, 0) / aps.length;
+      const precioMin = Math.min(...aps.map(a => a.precioFactura));
+      const precioMax = Math.max(...aps.map(a => a.precioFactura));
+      return { ...p, impactoTotal, subidas, bajadas, cantTotal, diffPromedio, pctPromedio, precioMin, precioMax };
+    });
+    return lista;
+  }, [facturas]);
+
+  // Filtrar y ordenar
+  const lista = useMemo(() => {
+    const q = busquedaProd.toLowerCase().trim();
+    return agregado
+      .filter(p => {
+        if (filtroDireccion === "sube" && p.impactoTotal <= 0.01) return false;
+        if (filtroDireccion === "baja" && p.impactoTotal >= -0.01) return false;
+        if (q) {
+          const enDesc = (p.descCat || p.descFact).toLowerCase().includes(q);
+          const enRef = p.ref.toLowerCase().includes(q);
+          if (!enDesc && !enRef) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        if (orden === "impacto")    return Math.abs(b.impactoTotal) - Math.abs(a.impactoTotal);
+        if (orden === "frecuencia") return b.apariciones.length - a.apariciones.length;
+        if (orden === "pct")        return Math.abs(b.pctPromedio) - Math.abs(a.pctPromedio);
+        return 0;
+      });
+  }, [agregado, orden, filtroDireccion, busquedaProd]);
+
+  // Totales agregados
+  const totalImpacto    = lista.reduce((acc, p) => acc + p.impactoTotal, 0);
+  const totalProductos  = lista.length;
+  const totalApariciones = lista.reduce((acc, p) => acc + p.apariciones.length, 0);
+
+  // Exportar a PDF
+  const exportarPDF = async () => {
+    let jsPDFmod;
+    try { jsPDFmod = await import("jspdf"); } catch(e) { alert("No se pudo cargar PDF"); return; }
+    const { jsPDF } = jsPDFmod;
+    const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "landscape" });
+    const PW = 297, ML = 12, MR = 12;
+    let y = 14;
+
+    doc.setFont("helvetica", "bold"); doc.setFontSize(15);
+    doc.text("ANALISIS DE VARIACION DE PRECIOS POR PRODUCTO", PW / 2, y, { align: "center" }); y += 6;
+    doc.setFontSize(8); doc.setFont("helvetica", "normal");
+    doc.text("ARA Corporate Sociedad de Inversiones, SL · CIF B90488222", PW / 2, y, { align: "center" }); y += 4;
+    doc.text(`Fecha del informe: ${new Date().toLocaleDateString("es-ES", { dateStyle: "long" })}`, PW / 2, y, { align: "center" }); y += 6;
+
+    // Resumen
+    doc.setDrawColor(0); doc.setLineWidth(0.4); doc.line(ML, y, PW - MR, y); y += 4;
+    doc.setFontSize(8.5); doc.setFont("helvetica", "bold");
+    doc.text(`Productos analizados: ${totalProductos}`, ML, y);
+    doc.text(`Apariciones totales: ${totalApariciones}`, ML + 70, y);
+    doc.text(`Facturas analizadas: ${facturas.length}`, ML + 140, y);
+    doc.text(`Impacto neto: EUR${totalImpacto >= 0 ? "+" : ""}${totalImpacto.toFixed(2)}`, ML + 210, y);
+    y += 4; doc.setLineWidth(0.4); doc.line(ML, y, PW - MR, y); y += 5;
+
+    // Filtros aplicados
+    if (filtrosActivos.busqueda || filtrosActivos.proveedor !== "todos" || filtrosActivos.estado !== "todos") {
+      doc.setFontSize(7.5); doc.setFont("helvetica", "italic"); doc.setTextColor(100);
+      const filtros = [];
+      if (filtrosActivos.busqueda) filtros.push(`busqueda: "${filtrosActivos.busqueda}"`);
+      if (filtrosActivos.proveedor !== "todos") filtros.push(`proveedor: ${filtrosActivos.proveedor}`);
+      if (filtrosActivos.estado !== "todos") filtros.push(`estado: ${filtrosActivos.estado}`);
+      doc.text(`Filtros aplicados: ${filtros.join(" · ")}`, ML, y); y += 5;
+      doc.setTextColor(0);
+    }
+
+    // Tabla
+    const cols = { ref: ML, desc: ML + 18, vec: ML + 130, pct: ML + 145, dif: ML + 165, prov: ML + 188, imp: ML + 220, fac: ML + 255 };
+    doc.setFontSize(7.5); doc.setFont("helvetica", "bold"); doc.setFillColor(40); doc.setTextColor(255);
+    doc.rect(ML, y - 3, PW - ML - MR, 5, "F");
+    doc.text("Ref",       cols.ref,  y);
+    doc.text("Producto",  cols.desc, y);
+    doc.text("Veces",     cols.vec,  y, { align: "right" });
+    doc.text("% prom",    cols.pct,  y, { align: "right" });
+    doc.text("Dif/u prom",cols.dif,  y, { align: "right" });
+    doc.text("Cant total",cols.prov, y, { align: "right" });
+    doc.text("Impacto EUR",cols.imp, y, { align: "right" });
+    doc.text("# Facturas", cols.fac, y, { align: "right" });
+    y += 4;
+    doc.setTextColor(0); doc.setFont("helvetica", "normal"); doc.setFontSize(7);
+
+    for (const p of lista) {
+      if (y > 195) { doc.addPage(); y = 14; }
+      const desc = (p.descCat || p.descFact).substring(0, 65);
+      doc.text(p.ref || "—", cols.ref, y);
+      doc.text(desc, cols.desc, y);
+      doc.text(String(p.apariciones.length), cols.vec, y, { align: "right" });
+      doc.text(`${p.pctPromedio >= 0 ? "+" : ""}${p.pctPromedio.toFixed(1)}%`, cols.pct, y, { align: "right" });
+      doc.text(`${p.diffPromedio >= 0 ? "+" : ""}${p.diffPromedio.toFixed(3)}`, cols.dif, y, { align: "right" });
+      doc.text(p.cantTotal.toFixed(0), cols.prov, y, { align: "right" });
+      const impStr = `${p.impactoTotal >= 0 ? "+" : ""}${p.impactoTotal.toFixed(2)}`;
+      if (p.impactoTotal > 0.01) doc.setTextColor(180, 0, 0);
+      else if (p.impactoTotal < -0.01) doc.setTextColor(0, 130, 0);
+      doc.text(impStr, cols.imp, y, { align: "right" });
+      doc.setTextColor(0);
+      doc.text(String(p.apariciones.length), cols.fac, y, { align: "right" });
+      y += 3.8;
+    }
+
+    // Total
+    if (y > 190) { doc.addPage(); y = 14; }
+    y += 3;
+    doc.setLineWidth(0.4); doc.line(ML, y, PW - MR, y); y += 4;
+    doc.setFont("helvetica", "bold"); doc.setFontSize(9);
+    doc.text("IMPACTO NETO TOTAL:", cols.imp - 30, y, { align: "right" });
+    if (totalImpacto > 0.01) doc.setTextColor(180, 0, 0);
+    else if (totalImpacto < -0.01) doc.setTextColor(0, 130, 0);
+    doc.text(`EUR${totalImpacto >= 0 ? "+" : ""}${totalImpacto.toFixed(2)}`, cols.imp, y, { align: "right" });
+    doc.setTextColor(0);
+
+    // Pie
+    y += 8;
+    doc.setFont("helvetica", "italic"); doc.setFontSize(7); doc.setTextColor(100);
+    doc.text("Informe generado automaticamente desde el sistema de gestion de pedidos ARA Corporate.", ML, y);
+
+    doc.save(`Analisis_Productos_${new Date().toISOString().slice(0,10)}.pdf`);
+  };
+
+  // Copiar resumen para email
+  const copiarResumen = () => {
+    let txt = `ANÁLISIS DE VARIACIÓN DE PRECIOS POR PRODUCTO\n`;
+    txt += `Fecha: ${new Date().toLocaleDateString("es-ES")}\n`;
+    txt += `Productos analizados: ${totalProductos} (${totalApariciones} apariciones en ${facturas.length} facturas)\n`;
+    txt += `Impacto neto: ${totalImpacto >= 0 ? "+" : ""}€${totalImpacto.toFixed(2)}\n\n`;
+    txt += `DETALLE:\n`;
+    lista.forEach(p => {
+      const desc = (p.descCat || p.descFact).substring(0, 60);
+      txt += `\n• ${desc} (ref ${p.ref || "—"})\n`;
+      txt += `  Aparece ${p.apariciones.length} veces · variación media ${p.pctPromedio >= 0 ? "+" : ""}${p.pctPromedio.toFixed(1)}% · impacto €${p.impactoTotal >= 0 ? "+" : ""}${p.impactoTotal.toFixed(2)}\n`;
+    });
+    navigator.clipboard.writeText(txt).then(
+      () => alert("✅ Resumen copiado al portapapeles. Pégalo en tu email."),
+      () => alert("No se pudo copiar. Selecciona el texto manualmente.")
+    );
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4">
+      <div className="absolute inset-0 bg-stone-900/60" onClick={onCerrar} />
+      <div className="relative bg-white border-4 border-stone-900 w-full max-w-6xl max-h-[95vh] overflow-y-auto shadow-[8px_8px_0_0_rgba(0,0,0,1)]">
+        {/* Header */}
+        <div className="bg-stone-900 text-amber-400 border-b-4 border-stone-900 p-3 flex items-center justify-between sticky top-0 z-10">
+          <div>
+            <h3 className="font-black text-lg" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+              📊 ANÁLISIS POR PRODUCTO
+            </h3>
+            <div className="text-[10px] opacity-80 mt-0.5">
+              {totalProductos} productos · {totalApariciones} apariciones · {facturas.length} facturas analizadas
+              {(filtrosActivos.proveedor !== "todos" || filtrosActivos.estado !== "todos" || filtrosActivos.busqueda) && (
+                <span className="ml-2 bg-amber-500 text-stone-900 px-1.5 py-0.5 rounded-sm font-bold">
+                  filtrado
+                </span>
+              )}
+            </div>
+          </div>
+          <button onClick={onCerrar} className="bg-amber-400 text-stone-900 font-black px-3 py-1 border-2 border-amber-300 hover:bg-amber-300">
+            ✕
+          </button>
+        </div>
+
+        <div className="p-3 space-y-3">
+          {/* Resumen impacto */}
+          <div className={`border-2 border-stone-900 p-3 flex items-center gap-3 ${
+            totalImpacto > 0.01 ? "bg-red-50" : totalImpacto < -0.01 ? "bg-emerald-50" : "bg-stone-50"
+          }`}>
+            <div className="text-3xl">
+              {totalImpacto > 0.01 ? "📈" : totalImpacto < -0.01 ? "📉" : "⚖️"}
+            </div>
+            <div className="flex-1">
+              <div className="text-[10px] font-bold tracking-widest text-stone-600">IMPACTO ECONÓMICO TOTAL</div>
+              <div className={`text-2xl font-black font-mono ${totalImpacto > 0.01 ? "text-red-700" : totalImpacto < -0.01 ? "text-emerald-700" : "text-stone-700"}`}>
+                {totalImpacto >= 0 ? "+" : ""}€{totalImpacto.toFixed(2)}
+              </div>
+              <div className="text-[11px] text-stone-600">
+                en {totalApariciones} líneas de {facturas.length} factura{facturas.length === 1 ? "" : "s"}
+              </div>
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              <button onClick={exportarPDF}
+                title="Exportar este análisis en PDF para enviar al proveedor"
+                className="px-3 py-2 text-xs font-black tracking-widest border-2 border-stone-900 bg-stone-900 text-amber-400 hover:bg-amber-400 hover:text-stone-900"
+                style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+                📄 PDF
+              </button>
+              <button onClick={copiarResumen}
+                title="Copiar resumen del análisis en texto plano para pegar en un email"
+                className="px-3 py-2 text-xs font-black tracking-widest border-2 border-stone-900 bg-white text-stone-900 hover:bg-stone-100"
+                style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+                📋 COPIAR
+              </button>
+            </div>
+          </div>
+
+          {/* Filtros internos del análisis */}
+          <div className="flex flex-wrap items-center gap-2 bg-stone-50 border-2 border-stone-900 p-2">
+            <input
+              type="text"
+              value={busquedaProd}
+              onChange={(e) => setBusquedaProd(e.target.value)}
+              placeholder="Buscar producto…"
+              className="flex-1 min-w-[150px] border border-stone-900 p-1.5 text-xs font-mono focus:outline-none focus:bg-white" />
+            <span className="text-[9px] font-bold tracking-widest text-stone-600">DIRECCIÓN:</span>
+            {[
+              { key: "todos", label: "Todos" },
+              { key: "sube", label: "▲ Suben" },
+              { key: "baja", label: "▼ Bajan" },
+            ].map(d => (
+              <button key={d.key} onClick={() => setFiltroDireccion(d.key)}
+                className={`px-2 py-1 text-[10px] font-bold border ${filtroDireccion === d.key ? "bg-stone-900 text-amber-400 border-stone-900" : "bg-white text-stone-700 border-stone-300 hover:border-stone-900"}`}>
+                {d.label}
+              </button>
+            ))}
+            <span className="text-[9px] font-bold tracking-widest text-stone-600 ml-2">ORDENAR:</span>
+            {[
+              { key: "impacto",    label: "Impacto €" },
+              { key: "frecuencia", label: "Frecuencia" },
+              { key: "pct",        label: "% variación" },
+            ].map(o => (
+              <button key={o.key} onClick={() => setOrden(o.key)}
+                className={`px-2 py-1 text-[10px] font-bold border ${orden === o.key ? "bg-stone-900 text-amber-400 border-stone-900" : "bg-white text-stone-700 border-stone-300 hover:border-stone-900"}`}>
+                {o.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Tabla de productos */}
+          {lista.length === 0 ? (
+            <div className="p-8 text-center text-stone-500 text-sm border-2 border-stone-200">
+              No hay productos con variación que coincidan con los filtros.
+            </div>
+          ) : (
+            <div className="border-2 border-stone-900 overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="bg-stone-900 text-amber-400 text-[10px] font-bold tracking-widest">
+                  <tr>
+                    <th className="text-left p-2 w-10"></th>
+                    <th className="text-left p-2">REF</th>
+                    <th className="text-left p-2">PRODUCTO</th>
+                    <th className="text-right p-2 whitespace-nowrap">VECES</th>
+                    <th className="text-right p-2 whitespace-nowrap">% PROM</th>
+                    <th className="text-right p-2 whitespace-nowrap">DIF/U PROM</th>
+                    <th className="text-right p-2 whitespace-nowrap">CANT TOT</th>
+                    <th className="text-right p-2 whitespace-nowrap">IMPACTO €</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lista.map(p => {
+                    const expandido = productoExpandido === p.key;
+                    return (
+                      <React.Fragment key={p.key}>
+                        <tr
+                          onClick={() => setProductoExpandido(expandido ? null : p.key)}
+                          className={`border-t border-stone-200 cursor-pointer hover:bg-amber-50 ${expandido ? "bg-amber-100" : ""}`}>
+                          <td className="p-2 text-center text-stone-500">{expandido ? "▼" : "▶"}</td>
+                          <td className="p-2 font-mono text-[10px]">{p.ref || "—"}</td>
+                          <td className="p-2 font-bold">{p.descCat || p.descFact}</td>
+                          <td className="p-2 text-right font-mono">{p.apariciones.length}</td>
+                          <td className={`p-2 text-right font-mono font-bold ${p.pctPromedio > 0 ? "text-red-700" : p.pctPromedio < 0 ? "text-emerald-700" : ""}`}>
+                            {p.pctPromedio >= 0 ? "+" : ""}{p.pctPromedio.toFixed(1)}%
+                          </td>
+                          <td className={`p-2 text-right font-mono ${p.diffPromedio > 0 ? "text-red-700" : p.diffPromedio < 0 ? "text-emerald-700" : ""}`}>
+                            {p.diffPromedio >= 0 ? "+" : ""}€{p.diffPromedio.toFixed(3)}
+                          </td>
+                          <td className="p-2 text-right font-mono">{p.cantTotal.toFixed(0)} {p.unidad}</td>
+                          <td className={`p-2 text-right font-mono font-black ${p.impactoTotal > 0.01 ? "text-red-700" : p.impactoTotal < -0.01 ? "text-emerald-700" : ""}`}>
+                            {p.impactoTotal >= 0 ? "+" : ""}€{p.impactoTotal.toFixed(2)}
+                          </td>
+                        </tr>
+                        {expandido && (
+                          <tr className="bg-stone-50 border-t border-stone-200">
+                            <td colSpan={8} className="p-2">
+                              <div className="text-[10px] font-bold tracking-widest text-stone-600 mb-1">
+                                APARICIONES ({p.apariciones.length}) · precio min €{p.precioMin.toFixed(4)} · max €{p.precioMax.toFixed(4)}
+                              </div>
+                              <div className="overflow-x-auto">
+                                <table className="w-full text-[11px]">
+                                  <thead className="text-[9px] text-stone-500 font-bold">
+                                    <tr>
+                                      <th className="text-left p-1">FECHA</th>
+                                      <th className="text-left p-1">FACTURA</th>
+                                      <th className="text-right p-1">CANT</th>
+                                      <th className="text-right p-1">PRECIO ANTES</th>
+                                      <th className="text-right p-1">PRECIO FACT</th>
+                                      <th className="text-right p-1">DIF/U</th>
+                                      <th className="text-right p-1">%</th>
+                                      <th className="text-right p-1">IMPACTO</th>
+                                      <th className="p-1"></th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {p.apariciones.slice().sort((a, b) => (a.fecha || "").localeCompare(b.fecha || "")).map((a, i) => {
+                                      const fact = facturas.find(f => f.id === a.facturaId);
+                                      return (
+                                        <tr key={i} className="border-t border-stone-200">
+                                          <td className="p-1 font-mono">{a.fecha ? new Date(a.fecha).toLocaleDateString("es-ES") : "—"}</td>
+                                          <td className="p-1 font-mono text-[10px]">{a.numFact || a.facturaNombre.substring(0, 30)}</td>
+                                          <td className="p-1 text-right font-mono">{a.cantidad}</td>
+                                          <td className="p-1 text-right font-mono">{a.precioActual !== null ? `€${a.precioActual.toFixed(4)}` : "—"}</td>
+                                          <td className="p-1 text-right font-mono font-bold">€{a.precioFactura.toFixed(4)}</td>
+                                          <td className={`p-1 text-right font-mono ${a.sube ? "text-red-700" : a.baja ? "text-emerald-700" : ""}`}>
+                                            {a.diff >= 0 ? "+" : ""}€{a.diff.toFixed(4)}
+                                          </td>
+                                          <td className={`p-1 text-right font-mono font-bold ${a.sube ? "text-red-700" : a.baja ? "text-emerald-700" : ""}`}>
+                                            {a.pct >= 0 ? "+" : ""}{a.pct.toFixed(1)}%
+                                          </td>
+                                          <td className={`p-1 text-right font-mono font-bold ${a.impacto > 0.01 ? "text-red-700" : a.impacto < -0.01 ? "text-emerald-700" : ""}`}>
+                                            {a.impacto >= 0 ? "+" : ""}€{a.impacto.toFixed(2)}
+                                          </td>
+                                          <td className="p-1 text-right">
+                                            {fact && (
+                                              <button onClick={(e) => { e.stopPropagation(); onAbrirFactura(fact); }}
+                                                className="text-[9px] font-bold bg-amber-500 text-stone-900 px-1.5 py-0.5 border border-stone-900 hover:bg-amber-400">
+                                                IR
+                                              </button>
+                                            )}
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
