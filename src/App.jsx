@@ -5213,8 +5213,16 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
   const COLORES_PROV = ["emerald","amber","blue","violet","rose","teal"];
 
   const recargar = async () => {
-    const r = await fetch(FAC_URL + "/ver/" + factura.id, { headers: { "x-admin-pin": pin } });
-    setFactura(await r.json());
+    try {
+      const r = await fetch(FAC_URL + "/ver/" + factura.id, { headers: { "x-admin-pin": pin } });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({ error: "Error " + r.status }));
+        throw new Error(err.error || "Error " + r.status);
+      }
+      setFactura(await r.json());
+    } catch (e) {
+      alert("No se pudo recargar la factura: " + e.message);
+    }
   };
 
   const handleCrearProveedor = async () => {
@@ -5245,12 +5253,20 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
   };
 
   const updateLinea = async (idx, changes) => {
-    await fetch(FAC_URL + "/linea/" + factura.id + "/" + idx, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json", "x-admin-pin": pin },
-      body: JSON.stringify(changes)
-    });
-    recargar();
+    try {
+      const r = await fetch(FAC_URL + "/linea/" + factura.id + "/" + idx, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "x-admin-pin": pin },
+        body: JSON.stringify(changes)
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({ error: "Error " + r.status }));
+        throw new Error(err.error || "Error " + r.status);
+      }
+      await recargar();
+    } catch (e) {
+      alert("No se pudo actualizar la línea: " + e.message);
+    }
   };
 
   const handleConfirmar = async () => {
@@ -5478,14 +5494,20 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
   // Accion masiva — aplica a las líneas filtradas
   const accionMasiva = async (nuevoEstado) => {
     const indices = lineasFiltradas.map(l => l.idx);
-    await Promise.all(indices.map(idx =>
-      fetch(`https://araujo-bot.onrender.com/api/facturas/linea/${factura.id}/${idx}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json", "x-admin-pin": pin },
-        body: JSON.stringify({ estado: nuevoEstado })
-      })
-    ));
-    recargar();
+    try {
+      const resultados = await Promise.all(indices.map(idx =>
+        fetch(`https://araujo-bot.onrender.com/api/facturas/linea/${factura.id}/${idx}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", "x-admin-pin": pin },
+          body: JSON.stringify({ estado: nuevoEstado })
+        })
+      ));
+      const fallidas = resultados.filter(r => !r.ok).length;
+      if (fallidas > 0) alert(`Atención: ${fallidas} de ${indices.length} líneas no se pudieron actualizar.`);
+      await recargar();
+    } catch (e) {
+      alert("Error en acción masiva: " + e.message);
+    }
   };
 
   return (
