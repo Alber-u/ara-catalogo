@@ -5103,20 +5103,54 @@ function PestañaFacturas({ api, pin }) {
   useEffect(() => { cargar(); }, []);
 
   const handleSubir = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
     setSubiendo(true);
+    let okCount = 0, errCount = 0;
+    let primera = null;
     try {
-      const form = new FormData();
-      form.append("factura", file);
-      const r = await fetch(FAC_URL + "/subir", { method: "POST", headers: { "x-admin-pin": pin }, body: form });
-      const data = await r.json();
-      if (!data.ok) throw new Error(data.error);
+      for (const file of files) {
+        try {
+          const form = new FormData();
+          form.append("factura", file);
+          const r = await fetch(FAC_URL + "/subir", { method: "POST", headers: { "x-admin-pin": pin }, body: form });
+          const data = await r.json();
+          if (!data.ok) { errCount++; continue; }
+          okCount++;
+          if (!primera) primera = data.factura;
+        } catch { errCount++; }
+      }
       await cargar();
-      // Abrir directamente para extraer
-      setFacturaAbierta(data.factura);
+      // Si solo hay 1 factura subida, abrirla directamente como antes
+      if (files.length === 1 && primera) {
+        setFacturaAbierta(primera);
+      } else if (okCount > 0) {
+        const msg = errCount > 0
+          ? `✅ ${okCount} subidas, ${errCount} fallaron. Pulsa 'EXTRAER TODAS' para procesarlas con IA.`
+          : `✅ ${okCount} facturas subidas. Pulsa 'EXTRAER TODAS' para procesarlas con IA.`;
+        alert(msg);
+      }
     } catch (e) { alert("Error subiendo: " + e.message); }
     finally { setSubiendo(false); if (fileRef.current) fileRef.current.value = ""; }
+  };
+
+  const [extrayendoTodas, setExtrayendoTodas] = useState(false);
+  const handleExtraerTodas = async () => {
+    const pendientes = facturas.filter(f => f.estado === "pendiente_extraccion");
+    if (pendientes.length === 0) { alert("No hay facturas pendientes de extraer."); return; }
+    if (!confirm(`Vas a extraer ${pendientes.length} facturas con IA. Cada una cuesta ~6 céntimos en API. ¿Continuar?`)) return;
+    setExtrayendoTodas(true);
+    let ok = 0, err = 0;
+    for (const f of pendientes) {
+      try {
+        const r = await fetch(FAC_URL + "/extraer/" + f.id, { method: "POST", headers: { "x-admin-pin": pin } });
+        if (r.ok) ok++; else err++;
+        // Recargar la lista periódicamente para que el usuario vea progreso
+        await cargar();
+      } catch { err++; }
+    }
+    setExtrayendoTodas(false);
+    alert(`Extracción completada: ${ok} ok, ${err} con error.`);
   };
 
   const handleEliminar = async (id) => {
@@ -5132,14 +5166,23 @@ function PestañaFacturas({ api, pin }) {
     <div className="space-y-4">
       {/* Subir factura */}
       <div className="bg-white border-2 border-stone-900 p-4">
-        <div className="text-[10px] tracking-widest font-bold text-stone-700 mb-3">IMPORTAR FACTURA</div>
-        <p className="text-xs text-stone-600 mb-3">Sube una factura en PDF, JPG o PNG. La IA extraerá automáticamente los productos y precios para revisión.</p>
-        <input ref={fileRef} type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" onChange={handleSubir} className="hidden" />
-        <button onClick={() => fileRef.current?.click()} disabled={subiendo}
-                className={`w-full p-4 font-black text-sm tracking-widest border-2 border-stone-900 transition-all ${subiendo ? "bg-stone-300 cursor-wait" : "bg-stone-900 text-amber-400 hover:bg-amber-400 hover:text-stone-900"}`}
-                style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
-          {subiendo ? "⏳ SUBIENDO..." : "📄 SUBIR FACTURA"}
-        </button>
+        <div className="text-[10px] tracking-widest font-bold text-stone-700 mb-3">IMPORTAR FACTURAS</div>
+        <p className="text-xs text-stone-600 mb-3">Sube una o varias facturas en PDF, JPG o PNG. La IA extraerá automáticamente los productos y precios para revisión.</p>
+        <input ref={fileRef} type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.webp" onChange={handleSubir} className="hidden" />
+        <div className="flex gap-2 flex-wrap">
+          <button onClick={() => fileRef.current?.click()} disabled={subiendo || extrayendoTodas}
+                  className={`flex-1 p-4 font-black text-sm tracking-widest border-2 border-stone-900 transition-all ${subiendo ? "bg-stone-300 cursor-wait" : "bg-stone-900 text-amber-400 hover:bg-amber-400 hover:text-stone-900"}`}
+                  style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+            {subiendo ? "⏳ SUBIENDO..." : "📄 SUBIR FACTURAS"}
+          </button>
+          {facturas.some(f => f.estado === "pendiente_extraccion") && (
+            <button onClick={handleExtraerTodas} disabled={subiendo || extrayendoTodas}
+                    className={`p-4 font-black text-sm tracking-widest border-2 border-stone-900 transition-all ${extrayendoTodas ? "bg-stone-300 cursor-wait" : "bg-blue-600 text-white hover:bg-blue-700"}`}
+                    style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+              {extrayendoTodas ? "⏳ EXTRAYENDO..." : `🤖 EXTRAER TODAS (${facturas.filter(f => f.estado === "pendiente_extraccion").length})`}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Lista de facturas */}
@@ -5209,6 +5252,8 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
   const [busquedas, setBusquedas] = useState({});
   const [creandoProv, setCreandoProv] = useState(false);
   const [nuevoProv, setNuevoProv] = useState({ nombre: factura.proveedorDesconocido?.nombreDetectado || "", formaPago: "Contado", color: "blue", email: "" });
+  const [cambioIdx, setCambioIdx] = useState(null); // idx de la línea cuyo buscador 'cambiar producto' está abierto
+  const [busquedaCambio, setBusquedaCambio] = useState(""); // texto del buscador
   const FAC_URL = "https://araujo-bot.onrender.com/api/facturas";
   const COLORES_PROV = ["emerald","amber","blue","violet","rose","teal"];
 
@@ -5269,14 +5314,53 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
     }
   };
 
+  // Cambia el producto sugerido de una línea y recalcula la variación de precio
+  // contra el nuevo producto seleccionado
+  const cambiarProducto = async (idx, nuevoProductoId) => {
+    const linea = (factura.lineasRevision || []).find(l => l.idx === idx);
+    if (!linea) return;
+    const prod = CATALOGO.find(p => p.id === nuevoProductoId);
+    if (!prod) return alert("Producto no encontrado");
+
+    // Recalcular precio actual y variación
+    const provData = prod.proveedores?.[linea.proveedorId];
+    let precioActual = null;
+    let variacionPrecio = null;
+    if (provData) {
+      const netoActual = provData.dto > 0
+        ? +(provData.bruto * (1 - provData.dto / 100)).toFixed(4)
+        : provData.bruto;
+      precioActual = netoActual;
+      const diff = (linea.precioUnitarioNeto || 0) - netoActual;
+      const pct = netoActual > 0 ? +((diff / netoActual) * 100).toFixed(1) : 0;
+      variacionPrecio = { diff: +diff.toFixed(4), pct, sube: diff > 0.001, baja: diff < -0.001 };
+    }
+
+    await updateLinea(idx, {
+      productoSugerido: nuevoProductoId,
+      confianza: 100,            // el usuario lo eligió a mano: máxima confianza
+      estado: "confirmado",
+      precioActual,
+      variacionPrecio,
+      tieneEnCatalogo: precioActual !== null
+    });
+    setCambioIdx(null);
+    setBusquedaCambio("");
+  };
+
   const handleConfirmar = async () => {
     if (!confirm("¿Aplicar todos los cambios confirmados al catálogo?")) return;
     setConfirmando(true);
     try {
-      const r = await fetch(FAC_URL + "/confirmar/" + factura.id, { method: "POST", headers: { "x-admin-pin": pin } });
+      const r = await fetch(FAC_URL + "/confirmar/" + factura.id, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-admin-pin": pin },
+        body: JSON.stringify({})
+      });
       const data = await r.json();
       if (!data.ok) throw new Error(data.error);
-      alert(`✅ Aplicado: ${data.actualizados} precios actualizados, ${data.nuevos} productos nuevos, ${data.ignorados} ignorados`);
+      const saltadosTxt = data.saltados ? `, ${data.saltados} saltados (sin decidir)` : "";
+      alert(`✅ Aplicado: ${data.actualizados} precios actualizados, ${data.nuevos} productos nuevos, ${data.ignorados} ignorados${saltadosTxt}`);
       recargar();
     } catch (e) { alert("Error: " + e.message); }
     finally { setConfirmando(false); }
@@ -5455,6 +5539,7 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
   const confirmadas = lineas.filter(l => l.estado === "confirmado").length;
   const nuevas      = lineas.filter(l => l.estado === "nuevo").length;
   const ignoradas   = lineas.filter(l => l.estado === "ignorado").length;
+  const revisar     = lineas.filter(l => l.estado === "revisar").length;
 
   // Impacto económico = diff_unitario × cantidad de la factura
   // Ignoramos las líneas en estado "ignorado" para no contaminar las cifras
@@ -5479,6 +5564,7 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
     if (filtro === "confirmado") return l.estado === "confirmado";
     if (filtro === "nuevo")      return l.estado === "nuevo";
     if (filtro === "ignorado")   return l.estado === "ignorado";
+    if (filtro === "revisar")    return l.estado === "revisar";
     if (filtro === "sube")       return l.variacionPrecio?.sube;
     if (filtro === "baja")       return l.variacionPrecio?.baja;
     return true;
@@ -5651,14 +5737,16 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
               )}
 
               {/* Filtros clickables */}
-              <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 text-center">
+              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-1.5 text-center">
                 {[
-                  { key: "todo",       label: "TODO",       val: lineas.length,  extra: null,                                                            active: "bg-stone-900 text-amber-400",       inactive: "bg-stone-100 text-stone-700 hover:bg-stone-200" },
-                  { key: "pendiente",  label: "PENDIENTES", val: pendientes,     extra: null,                                                            active: "bg-amber-500 text-white",           inactive: "bg-amber-50 text-amber-800 hover:bg-amber-100"  },
-                  { key: "confirmado", label: "CONFIRM.",   val: confirmadas,    extra: null,                                                            active: "bg-emerald-600 text-white",         inactive: "bg-emerald-50 text-emerald-800 hover:bg-emerald-100" },
-                  { key: "nuevo",      label: "NUEVAS",     val: nuevas,         extra: null,                                                            active: "bg-blue-600 text-white",            inactive: "bg-blue-50 text-blue-800 hover:bg-blue-100"    },
-                  { key: "sube",       label: "▲ SUBEN",    val: subidas,        extra: subidas > 0 ? { tot: `+€${impactoSube.toFixed(2)}`,  unit: `+€${diffSubeUnit.toFixed(3)}/ud` } : null, active: "bg-red-600 text-white",             inactive: "bg-red-50 text-red-800 hover:bg-red-100"       },
-                  { key: "baja",       label: "▼ BAJAN",    val: bajadas,        extra: bajadas > 0 ? { tot: `€${impactoBaja.toFixed(2)}`,    unit: `€${diffBajaUnit.toFixed(3)}/ud` }  : null, active: "bg-green-600 text-white",           inactive: "bg-green-50 text-green-800 hover:bg-green-100" },
+                  { key: "todo",       label: "TODO",       val: lineas.length,  extra: null, active: "bg-stone-900 text-amber-400",       inactive: "bg-stone-100 text-stone-700 hover:bg-stone-200" },
+                  { key: "pendiente",  label: "PENDIENTES", val: pendientes,     extra: null, active: "bg-amber-500 text-white",           inactive: "bg-amber-50 text-amber-800 hover:bg-amber-100"  },
+                  { key: "revisar",    label: "⚠️ REVISAR", val: revisar,        extra: null, active: "bg-orange-600 text-white",          inactive: "bg-orange-50 text-orange-800 hover:bg-orange-100" },
+                  { key: "confirmado", label: "CONFIRM.",   val: confirmadas,    extra: null, active: "bg-emerald-600 text-white",         inactive: "bg-emerald-50 text-emerald-800 hover:bg-emerald-100" },
+                  { key: "nuevo",      label: "NUEVAS",     val: nuevas,         extra: null, active: "bg-blue-600 text-white",            inactive: "bg-blue-50 text-blue-800 hover:bg-blue-100"    },
+                  { key: "ignorado",   label: "IGNORADAS",  val: ignoradas,      extra: null, active: "bg-stone-700 text-white",           inactive: "bg-stone-100 text-stone-600 hover:bg-stone-200"  },
+                  { key: "sube",       label: "▲ SUBEN",    val: subidas,        extra: subidas > 0 ? { tot: `+€${impactoSube.toFixed(2)}`,  unit: `+€${diffSubeUnit.toFixed(3)}/ud` } : null, active: "bg-red-600 text-white",   inactive: "bg-red-50 text-red-800 hover:bg-red-100"       },
+                  { key: "baja",       label: "▼ BAJAN",    val: bajadas,        extra: bajadas > 0 ? { tot: `€${impactoBaja.toFixed(2)}`,   unit: `€${diffBajaUnit.toFixed(3)}/ud` }  : null, active: "bg-green-600 text-white", inactive: "bg-green-50 text-green-800 hover:bg-green-100" },
                 ].map(s => (
                   <button key={s.key} onClick={() => setFiltro(f => f === s.key ? "todo" : s.key)}
                     className={`p-2 border-2 border-stone-900 transition-all ${filtro === s.key ? s.active : s.inactive}`}>
@@ -5719,11 +5807,18 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
               {/* Líneas */}
               <div className="space-y-2">
                 {lineasFiltradas.map((linea) => (
-                  <div key={linea.idx} className={`border-2 border-stone-900 ${linea.estado === "ignorado" ? "opacity-40" : ""}`}>
+                  <div key={linea.idx} className={`border-2 ${linea.estado === "revisar" ? "border-orange-600 ring-2 ring-orange-300" : "border-stone-900"} ${linea.estado === "ignorado" ? "opacity-40" : ""}`}>
                     {/* Cabecera línea */}
-                    <div className="bg-stone-100 p-2 flex items-start gap-2">
+                    <div className={`p-2 flex items-start gap-2 ${linea.estado === "revisar" ? "bg-orange-50" : "bg-stone-100"}`}>
                       <div className="flex-1 min-w-0">
-                        <div className="font-mono text-[10px] text-stone-500">{linea.lineaOriginal.referencia_proveedor}</div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono text-[10px] text-stone-500">{linea.lineaOriginal.referencia_proveedor}</span>
+                          {linea.estado === "revisar" && (
+                            <span className="text-[9px] font-black px-1.5 py-0.5 bg-orange-600 text-white tracking-widest">
+                              ⚠️ REVISAR · subida sospechosa
+                            </span>
+                          )}
+                        </div>
                         <div className="font-bold text-sm">{linea.lineaOriginal.descripcion_original}</div>
                         <div className="text-[10px] text-stone-600">
                           {linea.lineaOriginal.cantidad} {linea.lineaOriginal.unidad} ×
@@ -5793,7 +5888,54 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
                             {btn.label}
                           </button>
                         ))}
+                        <button
+                          onClick={() => { setCambioIdx(cambioIdx === linea.idx ? null : linea.idx); setBusquedaCambio(""); }}
+                          className={`px-2 py-1 text-[10px] font-bold border ${cambioIdx === linea.idx ? "bg-violet-600 text-white border-stone-900" : "bg-white text-stone-700 border-stone-300 hover:border-violet-600 hover:text-violet-700"}`}>
+                          🔍 CAMBIAR PRODUCTO
+                        </button>
                       </div>
+
+                      {/* Buscador de catálogo (cambiar producto) */}
+                      {cambioIdx === linea.idx && (
+                        <div className="bg-violet-50 border-2 border-violet-600 p-2 space-y-2">
+                          <div className="text-[9px] font-bold tracking-widest text-violet-800">BUSCAR PRODUCTO EN CATÁLOGO</div>
+                          <input
+                            type="text"
+                            autoFocus
+                            value={busquedaCambio}
+                            onChange={(e) => setBusquedaCambio(e.target.value)}
+                            placeholder="Descripción o referencia…"
+                            className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:outline-none focus:bg-white" />
+                          <div className="max-h-48 overflow-y-auto border border-stone-200 bg-white">
+                            {(() => {
+                              const q = busquedaCambio.toLowerCase().trim();
+                              const filtrados = q
+                                ? CATALOGO.filter(p =>
+                                    p.desc.toLowerCase().includes(q) ||
+                                    Object.values(p.proveedores || {}).some(pv => (pv?.ref || "").toLowerCase().includes(q))
+                                  ).slice(0, 30)
+                                : [];
+                              if (!q) return <div className="p-2 text-[10px] text-stone-500 italic">Empieza a escribir para ver resultados…</div>;
+                              if (filtrados.length === 0) return <div className="p-2 text-[10px] text-stone-500">Sin coincidencias</div>;
+                              return filtrados.map(p => {
+                                const provThis = p.proveedores?.[linea.proveedorId];
+                                return (
+                                  <button key={p.id}
+                                    onClick={() => cambiarProducto(linea.idx, p.id)}
+                                    className="w-full text-left p-2 hover:bg-violet-100 border-b border-stone-100 last:border-b-0">
+                                    <div className="text-xs font-bold">{p.desc}</div>
+                                    <div className="text-[10px] text-stone-500">
+                                      {provThis ? <>ref: <span className="font-mono">{provThis.ref || "—"}</span> · €{provThis.bruto}{provThis.dto > 0 && ` (-${provThis.dto}%)`}</> : <span className="italic">sin datos para este proveedor</span>}
+                                      {p.familia && <span className="ml-2">· {p.familia}</span>}
+                                    </div>
+                                  </button>
+                                );
+                              });
+                            })()}
+                          </div>
+                          <div className="text-[9px] text-stone-500">Al seleccionar uno se confirma la línea y se recalcula la variación de precio.</div>
+                        </div>
+                      )}
 
                       {/* Sugerencias alternativas */}
                       {linea.sugerencias?.length > 1 && linea.estado !== "ignorado" && (
@@ -5801,7 +5943,7 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
                           Otras opciones:
                           {linea.sugerencias.slice(1).map(s => (
                             <button key={s.id}
-                              onClick={() => updateLinea(linea.idx, { productoSugerido: s.id, confianza: s.confianza, estado: "confirmado" })}
+                              onClick={() => cambiarProducto(linea.idx, s.id)}
                               className="ml-2 underline text-stone-700 hover:text-stone-900">
                               {s.desc} ({s.confianza}%)
                             </button>
@@ -5811,14 +5953,24 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
 
                       {/* Campos para producto nuevo */}
                       {linea.estado === "nuevo" && (
-                        <div className="grid grid-cols-2 gap-2 bg-blue-50 p-2 border border-blue-300">
-                          <div>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 bg-blue-50 p-2 border border-blue-300">
+                          <div className="sm:col-span-2">
                             <label className="text-[9px] font-bold text-stone-600">DESCRIPCIÓN ESTÁNDAR</label>
                             <input type="text" defaultValue={linea.descripcionPersonalizada || linea.lineaOriginal.descripcion_original}
                               onBlur={(e) => updateLinea(linea.idx, { descripcionPersonalizada: e.target.value })}
                               className="w-full border border-stone-400 p-1 text-xs font-mono focus:outline-none" />
                           </div>
                           <div>
+                            <label className="text-[9px] font-bold text-stone-600">REFERENCIA PROVEEDOR</label>
+                            <input type="text" defaultValue={linea.lineaOriginal.referencia_proveedor || ""} disabled
+                              className="w-full border border-stone-300 bg-stone-100 p-1 text-xs font-mono text-stone-600" />
+                          </div>
+                          <div>
+                            <label className="text-[9px] font-bold text-stone-600">UNIDAD</label>
+                            <input type="text" defaultValue={linea.lineaOriginal.unidad || "uni"} disabled
+                              className="w-full border border-stone-300 bg-stone-100 p-1 text-xs font-mono text-stone-600" />
+                          </div>
+                          <div className="sm:col-span-2">
                             <label className="text-[9px] font-bold text-stone-600">FAMILIA</label>
                             <select defaultValue={linea.familiaPersonalizada || "Varios"}
                               onChange={(e) => updateLinea(linea.idx, { familiaPersonalizada: e.target.value })}
