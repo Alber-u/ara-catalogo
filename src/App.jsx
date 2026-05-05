@@ -5095,7 +5095,8 @@ function PestañaFacturas({ api, pin }) {
     setCargando(true);
     try {
       const r = await fetch(FAC_URL + "/lista", { headers: { "x-admin-pin": pin } });
-      setFacturas(await r.json());
+      const data = await r.json();
+      setFacturas(Array.isArray(data) ? data : []);
     } catch { } finally { setCargando(false); }
   };
 
