@@ -5466,14 +5466,33 @@ function PestañaFacturas({ api, pin }) {
 
 function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFactura }) {
   const [orden, setOrden] = useState("impacto"); // impacto | frecuencia | pct
-  const [filtroDireccion, setFiltroDireccion] = useState("todos"); // todos | sube | baja
+  const [filtroDireccion, setFiltroDireccion] = useState("todos"); // todos | sube | baja | sospechoso
   const [busquedaProd, setBusquedaProd] = useState("");
   const [productoExpandido, setProductoExpandido] = useState(null);
+  const [excluirRectificativas, setExcluirRectificativas] = useState(true); // por defecto SÍ se excluyen
+
+  // Detector de factura rectificativa:
+  // 1. Nº de factura contiene "FR" o empieza por "R" (Aquatubo: 26AVFR00117, 25AVFR03182)
+  // 2. O total negativo (es un abono)
+  // 3. O archivo original empieza por "R"
+  const esRectificativa = (f) => {
+    const num = (f.datosExtraidos?.numero_factura || "").toUpperCase();
+    const total = parseFloat(f.datosExtraidos?.total) || 0;
+    const archivo = (f.archivoOriginal || "").toUpperCase();
+    return /\bFR\d|^R\d|^[A-Z]{0,4}R\d/.test(num) || total < 0 || /^R[\s_-]/.test(archivo);
+  };
+
+  // Lista de facturas usable después del filtro de rectificativas
+  const facturasUsables = useMemo(() =>
+    excluirRectificativas ? facturas.filter(f => !esRectificativa(f)) : facturas,
+    [facturas, excluirRectificativas]
+  );
+  const numRectificativas = facturas.length - facturasUsables.length;
 
   // Agregar líneas por productoSugerido (id del catálogo) o por descripción si no hay match
   const agregado = useMemo(() => {
     const mapa = new Map(); // key → { id, desc, ref, apariciones: [] }
-    facturas.forEach(f => {
+    facturasUsables.forEach(f => {
       (f.lineasRevision || []).forEach(l => {
         if (!l.variacionPrecio) return;
         // Clave de agregación: id del producto del catálogo si existe, si no la referencia del proveedor
@@ -5541,7 +5560,7 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
       return { ...p, impactoTotal, subidas, bajadas, cantTotal, diffPromedio, pctPromedio, pctPonderado, precioAntesMedio, precioNuevoMedio, precioMin, precioMax };
     });
     return lista;
-  }, [facturas]);
+  }, [facturasUsables]);
 
   // Filtrar y ordenar
   const lista = useMemo(() => {
@@ -5550,6 +5569,7 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
       .filter(p => {
         if (filtroDireccion === "sube" && p.impactoTotal <= 0.01) return false;
         if (filtroDireccion === "baja" && p.impactoTotal >= -0.01) return false;
+        if (filtroDireccion === "sospechoso" && Math.abs(p.pctPonderado) <= 100) return false;
         if (q) {
           const enDesc = (p.descCat || p.descFact).toLowerCase().includes(q);
           const enRef = p.ref.toLowerCase().includes(q);
@@ -5565,6 +5585,9 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
       });
   }, [agregado, orden, filtroDireccion, busquedaProd]);
 
+  // Contador de sospechosos (siempre disponible para el chip)
+  const sospechosos = agregado.filter(p => Math.abs(p.pctPonderado) > 100).length;
+
   // Totales agregados
   const totalImpacto    = lista.reduce((acc, p) => acc + p.impactoTotal, 0);
   const totalProductos  = lista.length;
@@ -5579,14 +5602,14 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
     const PW = 210, PH = 297, ML = 15, MR = 15;
     const W = PW - ML - MR;
 
-    // Datos generales
+    // Datos generales — usamos facturasUsables (las que NO son rectificativas si hay filtro)
     const proveedor = filtrosActivos.proveedor !== "todos"
       ? filtrosActivos.proveedor
-      : (facturas.find(f => f.datosExtraidos?.proveedor)?.datosExtraidos?.proveedor || "Proveedor");
-    const fechas = facturas.map(f => f.datosExtraidos?.fecha).filter(Boolean).sort();
+      : (facturasUsables.find(f => f.datosExtraidos?.proveedor)?.datosExtraidos?.proveedor || "Proveedor");
+    const fechas = facturasUsables.map(f => f.datosExtraidos?.fecha).filter(Boolean).sort();
     const fechaIni = fechas[0] ? new Date(fechas[0]).toLocaleDateString("es-ES") : "—";
     const fechaFin = fechas[fechas.length - 1] ? new Date(fechas[fechas.length - 1]).toLocaleDateString("es-ES") : "—";
-    const totalFacturado = facturas.reduce((acc, f) => {
+    const totalFacturado = facturasUsables.reduce((acc, f) => {
       const t = parseFloat(f.datosExtraidos?.total) || 0;
       if (t > 0) return acc + t;
       return acc + (f.lineasRevision || []).reduce((a, l) => a + (parseFloat(l.lineaOriginal?.importe_linea) || 0), 0);
@@ -5615,7 +5638,13 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
     doc.setFontSize(9); doc.setFont("helvetica", "normal");
     doc.text(`Proveedor: ${proveedor}`, PW / 2, y, { align: "center" }); y += 5;
     doc.setFontSize(7.5); doc.setTextColor(80);
-    doc.text(`Período analizado: ${fechaIni} — ${fechaFin}  ·  ${facturas.length} facturas  ·  ${totalApariciones} líneas analizadas`, PW / 2, y, { align: "center" });
+    doc.text(`Período analizado: ${fechaIni} — ${fechaFin}  ·  ${facturasUsables.length} facturas  ·  ${totalApariciones} líneas analizadas`, PW / 2, y, { align: "center" });
+    if (excluirRectificativas && numRectificativas > 0) {
+      y += 3;
+      doc.setFontSize(6.5); doc.setTextColor(120); doc.setFont("helvetica", "italic");
+      doc.text(`(${numRectificativas} factura${numRectificativas === 1 ? "" : "s"} rectificativa${numRectificativas === 1 ? "" : "s"} excluida${numRectificativas === 1 ? "" : "s"} del análisis)`, PW / 2, y, { align: "center" });
+      doc.setFont("helvetica", "normal");
+    }
     doc.setTextColor(0); y += 6;
 
     // ═══ BLOQUE 1: RESUMEN EJECUTIVO ═══
@@ -5929,7 +5958,10 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
   const copiarResumen = () => {
     let txt = `ANÁLISIS DE VARIACIÓN DE PRECIOS POR PRODUCTO\n`;
     txt += `Fecha: ${new Date().toLocaleDateString("es-ES")}\n`;
-    txt += `Productos analizados: ${totalProductos} (${totalApariciones} apariciones en ${facturas.length} facturas)\n`;
+    txt += `Productos analizados: ${totalProductos} (${totalApariciones} apariciones en ${facturasUsables.length} facturas)\n`;
+    if (excluirRectificativas && numRectificativas > 0) {
+      txt += `(${numRectificativas} rectificativa${numRectificativas === 1 ? "" : "s"} excluida${numRectificativas === 1 ? "" : "s"} del análisis)\n`;
+    }
     txt += `Impacto neto: ${totalImpacto >= 0 ? "+" : ""}€${totalImpacto.toFixed(2)}\n\n`;
     txt += `DETALLE:\n`;
     lista.forEach(p => {
@@ -5954,7 +5986,10 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
               📊 ANÁLISIS POR PRODUCTO
             </h3>
             <div className="text-[10px] opacity-80 mt-0.5">
-              {totalProductos} productos · {totalApariciones} apariciones · {facturas.length} facturas analizadas
+              {totalProductos} productos · {totalApariciones} apariciones · {facturasUsables.length} factura{facturasUsables.length === 1 ? "" : "s"} analizada{facturasUsables.length === 1 ? "" : "s"}
+              {excluirRectificativas && numRectificativas > 0 && (
+                <span className="ml-2 opacity-70">({numRectificativas} rectif. excluida{numRectificativas === 1 ? "" : "s"})</span>
+              )}
               {(filtrosActivos.proveedor !== "todos" || filtrosActivos.estado !== "todos" || filtrosActivos.busqueda) && (
                 <span className="ml-2 bg-amber-500 text-stone-900 px-1.5 py-0.5 rounded-sm font-bold">
                   filtrado
@@ -5981,7 +6016,7 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
                 {totalImpacto >= 0 ? "+" : ""}€{totalImpacto.toFixed(2)}
               </div>
               <div className="text-[11px] text-stone-600">
-                en {totalApariciones} líneas de {facturas.length} factura{facturas.length === 1 ? "" : "s"}
+                en {totalApariciones} líneas de {facturasUsables.length} factura{facturasUsables.length === 1 ? "" : "s"}
               </div>
             </div>
             <div className="flex gap-2 flex-wrap">
@@ -5999,6 +6034,24 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
               </button>
             </div>
           </div>
+
+          {/* Toggle de rectificativas (separado, contextual) */}
+          {numRectificativas > 0 && (
+            <div className="flex items-center gap-2 bg-amber-50 border border-amber-300 p-2 text-[11px]">
+              <label className="flex items-center gap-2 cursor-pointer flex-1">
+                <input
+                  type="checkbox"
+                  checked={excluirRectificativas}
+                  onChange={(e) => setExcluirRectificativas(e.target.checked)}
+                  className="cursor-pointer" />
+                <span className="font-bold">Excluir facturas rectificativas del análisis</span>
+                <span className="text-stone-600">({numRectificativas} detectada{numRectificativas === 1 ? "" : "s"})</span>
+              </label>
+              <span className="text-[10px] text-stone-500 italic">
+                {excluirRectificativas ? "Recomendado para reclamar al proveedor" : "Incluyendo abonos en el cálculo"}
+              </span>
+            </div>
+          )}
 
           {/* Filtros internos del análisis */}
           <div className="flex flex-wrap items-center gap-2 bg-stone-50 border-2 border-stone-900 p-2">
@@ -6019,6 +6072,14 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
                 {d.label}
               </button>
             ))}
+            {sospechosos > 0 && (
+              <button
+                onClick={() => setFiltroDireccion(filtroDireccion === "sospechoso" ? "todos" : "sospechoso")}
+                title="Productos con variación > 100%. Probablemente matches incorrectos de la IA. Revisa antes de exportar el PDF."
+                className={`px-2 py-1 text-[10px] font-bold border ${filtroDireccion === "sospechoso" ? "bg-red-700 text-white border-red-900" : "bg-red-50 text-red-700 border-red-400 hover:bg-red-100"}`}>
+                🚨 Sospechosos ({sospechosos})
+              </button>
+            )}
             <span className="text-[9px] font-bold tracking-widest text-stone-600 ml-2">ORDENAR:</span>
             {[
               { key: "impacto",    label: "Impacto €" },
@@ -6031,6 +6092,13 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
               </button>
             ))}
           </div>
+
+          {/* Aviso si filtro sospechosos activo */}
+          {filtroDireccion === "sospechoso" && (
+            <div className="bg-red-50 border-2 border-red-700 p-2 text-[11px] text-red-900">
+              <b>🚨 Mostrando productos con variación &gt; 100%.</b> Estos suelen ser matches incorrectos de la IA (cuando se confunde un producto con otro distinto). Revisa cada línea: usa <b>🔍 CAMBIAR PRODUCTO</b> para reasignar al producto correcto, o <b>✕ NO APLICAR</b> si la línea está mal extraída. Limpiar estos antes de exportar el PDF al proveedor da credibilidad al informe.
+            </div>
+          )}
 
           {/* Tabla de productos */}
           {lista.length === 0 ? (
