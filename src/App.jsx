@@ -5092,6 +5092,7 @@ function PestañaFacturas({ api, pin }) {
   const [filtroProveedor, setFiltroProveedor] = useState("todos");
   const [filtroEstado, setFiltroEstado] = useState("todos");
   const [mostrarAnalisis, setMostrarAnalisis] = useState(false);
+  const [mostrarEquivalencias, setMostrarEquivalencias] = useState(false);
   const fileRef = useRef(null);
   const FAC_URL = "https://araujo-bot.onrender.com/api/facturas";
 
@@ -5324,6 +5325,12 @@ function PestañaFacturas({ api, pin }) {
               📊 ANÁLISIS POR PRODUCTO
             </button>
           )}
+          <button
+            onClick={() => setMostrarEquivalencias(true)}
+            title="Equivalencias aprendidas: gestiona las relaciones entre referencias de proveedor y productos del catálogo. Útil cuando detectas matches incorrectos."
+            className="bg-violet-500 text-white px-3 py-1 text-[10px] font-black tracking-widest border border-violet-700 hover:bg-violet-600">
+            🔗 EQUIVALENCIAS
+          </button>
           </div>
         </div>
         {cargando ? (
@@ -5460,6 +5467,236 @@ function PestañaFacturas({ api, pin }) {
           />
         );
       })()}
+
+      {mostrarEquivalencias && (
+        <ModalEquivalencias
+          pin={pin}
+          onCerrar={() => setMostrarEquivalencias(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────
+//  MODAL DE EQUIVALENCIAS APRENDIDAS
+// ─────────────────────────────────────────────────────────
+function ModalEquivalencias({ pin, onCerrar }) {
+  const [equivalencias, setEquivalencias] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [busqueda, setBusqueda] = useState("");
+  const [filtroProveedor, setFiltroProveedor] = useState("todos");
+  const [editando, setEditando] = useState(null); // idx que está editando
+  const [busquedaProd, setBusquedaProd] = useState("");
+  const FAC_URL = "https://araujo-bot.onrender.com/api/facturas";
+
+  const cargar = async () => {
+    setCargando(true);
+    try {
+      const r = await fetch(FAC_URL + "/equivalencias", { headers: { "x-admin-pin": pin } });
+      const data = await r.json();
+      if (Array.isArray(data)) setEquivalencias(data);
+    } catch (e) {
+      alert("Error cargando equivalencias: " + e.message);
+    } finally { setCargando(false); }
+  };
+
+  useEffect(() => { cargar(); }, []);
+
+  const handleBorrar = async (eq) => {
+    if (!confirm(`¿Borrar la equivalencia de ${eq.proveedor_nombre} ref ${eq.referencia_proveedor} → ${eq.producto_desc}?\n\nLa próxima vez que aparezca esta referencia en una factura, la IA volverá a buscar el producto desde cero.`)) return;
+    try {
+      const r = await fetch(FAC_URL + "/equivalencias/" + eq.idx, {
+        method: "DELETE",
+        headers: { "x-admin-pin": pin }
+      });
+      const data = await r.json();
+      if (!r.ok || !data.ok) throw new Error(data.error);
+      cargar();
+    } catch (e) { alert("Error: " + e.message); }
+  };
+
+  const handleEditar = async (eq, nuevoProductoId) => {
+    try {
+      const r = await fetch(FAC_URL + "/equivalencias/" + eq.idx, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "x-admin-pin": pin },
+        body: JSON.stringify({ producto_id: nuevoProductoId })
+      });
+      const data = await r.json();
+      if (!r.ok || !data.ok) throw new Error(data.error);
+      setEditando(null);
+      setBusquedaProd("");
+      cargar();
+    } catch (e) { alert("Error: " + e.message); }
+  };
+
+  // Lista de proveedores únicos
+  const proveedoresUnicos = Array.from(new Set(equivalencias.map(e => e.proveedor_nombre))).sort();
+
+  // Filtrar
+  const q = busqueda.toLowerCase().trim();
+  const filtradas = equivalencias.filter(eq => {
+    if (filtroProveedor !== "todos" && eq.proveedor_nombre !== filtroProveedor) return false;
+    if (q) {
+      const enRef = eq.referencia_proveedor.toLowerCase().includes(q);
+      const enDescProv = (eq.descripcion_proveedor || "").toLowerCase().includes(q);
+      const enDescCat = (eq.producto_desc || "").toLowerCase().includes(q);
+      if (!enRef && !enDescProv && !enDescCat) return false;
+    }
+    return true;
+  });
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4">
+      <div className="absolute inset-0 bg-stone-900/60" onClick={onCerrar} />
+      <div className="relative bg-white border-4 border-stone-900 w-full max-w-5xl max-h-[95vh] overflow-y-auto shadow-[8px_8px_0_0_rgba(0,0,0,1)]">
+        {/* Header */}
+        <div className="bg-violet-700 text-white border-b-4 border-stone-900 p-3 flex items-center justify-between sticky top-0 z-10">
+          <div>
+            <h3 className="font-black text-lg" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+              🔗 EQUIVALENCIAS APRENDIDAS
+            </h3>
+            <div className="text-[10px] opacity-90 mt-0.5">
+              {equivalencias.length} equivalencia{equivalencias.length === 1 ? "" : "s"} aprendida{equivalencias.length === 1 ? "" : "s"}
+              {filtradas.length !== equivalencias.length && ` · mostrando ${filtradas.length}`}
+            </div>
+          </div>
+          <button onClick={onCerrar} className="bg-white text-violet-700 font-black px-3 py-1 border-2 border-white hover:bg-violet-100">
+            ✕
+          </button>
+        </div>
+
+        <div className="p-3 space-y-3">
+          {/* Aviso explicativo */}
+          <div className="bg-violet-50 border-2 border-violet-300 p-3 text-[11px] text-violet-900">
+            <b>¿Qué son las equivalencias?</b> Cada vez que aplicas una factura al catálogo, la app aprende qué referencia de proveedor corresponde a qué producto del catálogo. Esto acelera futuras facturas: cuando vuelva a aparecer la misma referencia, la IA la matcheará automáticamente con confianza alta.
+            <br /><br />
+            <b>¿Por qué editar?</b> Si en algún momento aplicaste una factura con un match incorrecto (ej. la IA confundió un codo de latón con uno de plástico), la equivalencia mala quedó guardada. Aquí puedes corregirla o borrarla para que las próximas facturas no la repitan.
+          </div>
+
+          {/* Filtros */}
+          <div className="flex gap-2 flex-wrap items-center bg-stone-50 border-2 border-stone-900 p-2">
+            <input
+              type="text"
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
+              placeholder="Buscar por ref, descripción del proveedor o producto del catálogo…"
+              className="flex-1 min-w-[200px] border border-stone-900 p-1.5 text-xs font-mono focus:outline-none focus:bg-white" />
+            <select
+              value={filtroProveedor}
+              onChange={(e) => setFiltroProveedor(e.target.value)}
+              className="border border-stone-900 p-1.5 text-xs font-mono bg-white focus:outline-none">
+              <option value="todos">Todos los proveedores</option>
+              {proveedoresUnicos.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+            {(busqueda || filtroProveedor !== "todos") && (
+              <button
+                onClick={() => { setBusqueda(""); setFiltroProveedor("todos"); }}
+                className="px-2 py-1 text-[10px] font-bold border-2 border-stone-900 bg-stone-100 hover:bg-stone-200">
+                ✕ LIMPIAR
+              </button>
+            )}
+          </div>
+
+          {/* Tabla */}
+          {cargando ? (
+            <div className="p-8 text-center text-stone-500 text-sm">Cargando…</div>
+          ) : filtradas.length === 0 ? (
+            <div className="p-8 text-center text-stone-500 text-sm border-2 border-stone-200">
+              {equivalencias.length === 0 ? "Aún no hay equivalencias aprendidas. Aplica alguna factura al catálogo para empezar." : "No hay equivalencias que coincidan con los filtros."}
+            </div>
+          ) : (
+            <div className="border-2 border-stone-900 overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="bg-stone-900 text-amber-400 text-[10px] font-bold tracking-widest">
+                  <tr>
+                    <th className="text-left p-2">PROVEEDOR</th>
+                    <th className="text-left p-2">REF PROV</th>
+                    <th className="text-left p-2">DESCRIPCIÓN PROV</th>
+                    <th className="text-left p-2">→ PRODUCTO CATÁLOGO</th>
+                    <th className="text-left p-2">FAMILIA</th>
+                    <th className="text-right p-2">FECHA</th>
+                    <th className="p-2 w-24"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtradas.map(eq => (
+                    <React.Fragment key={eq.idx}>
+                      <tr className={`border-t border-stone-200 hover:bg-violet-50 ${eq.editadaManualmente ? "bg-violet-50/50" : ""}`}>
+                        <td className="p-2 font-bold">{eq.proveedor_nombre}</td>
+                        <td className="p-2 font-mono text-[10px]">{eq.referencia_proveedor}</td>
+                        <td className="p-2 text-stone-600 max-w-[200px] truncate">{eq.descripcion_proveedor}</td>
+                        <td className="p-2">
+                          <span className="text-stone-400 mr-1">→</span>
+                          <span className={`font-bold ${eq.producto_desc.includes("no encontrado") ? "text-red-700" : ""}`}>{eq.producto_desc}</span>
+                          {eq.editadaManualmente && (
+                            <span className="ml-2 text-[8px] bg-violet-200 text-violet-800 px-1 rounded">editada</span>
+                          )}
+                        </td>
+                        <td className="p-2 text-[10px] text-stone-500">{eq.producto_familia}</td>
+                        <td className="p-2 text-right text-[10px] text-stone-500">{eq.fecha ? new Date(eq.fecha).toLocaleDateString("es-ES") : "—"}</td>
+                        <td className="p-2">
+                          <div className="flex gap-1 justify-end">
+                            <button onClick={() => { setEditando(editando === eq.idx ? null : eq.idx); setBusquedaProd(""); }}
+                              title="Cambiar a qué producto del catálogo apunta esta equivalencia"
+                              className={`px-2 py-1 text-[10px] font-bold border ${editando === eq.idx ? "bg-violet-700 text-white border-violet-900" : "bg-white text-violet-700 border-violet-300 hover:bg-violet-100"}`}>
+                              ✎
+                            </button>
+                            <button onClick={() => handleBorrar(eq)}
+                              title="Borrar la equivalencia. La próxima factura con esta ref empezará desde cero."
+                              className="px-2 py-1 text-[10px] font-bold border bg-white text-red-700 border-red-300 hover:bg-red-50">
+                              🗑
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                      {editando === eq.idx && (
+                        <tr className="bg-violet-50 border-t border-stone-200">
+                          <td colSpan={7} className="p-2">
+                            <div className="text-[10px] font-bold tracking-widest text-violet-800 mb-1">
+                              CAMBIAR A QUÉ PRODUCTO APUNTA
+                            </div>
+                            <input
+                              type="text"
+                              value={busquedaProd}
+                              onChange={(e) => setBusquedaProd(e.target.value)}
+                              placeholder="Empieza a escribir descripción o referencia…"
+                              autoFocus
+                              className="w-full border border-violet-700 p-2 text-xs font-mono focus:outline-none focus:bg-white" />
+                            {busquedaProd.length >= 2 && (
+                              <div className="mt-1 max-h-48 overflow-y-auto border border-violet-300 bg-white">
+                                {(() => {
+                                  const ql = busquedaProd.toLowerCase();
+                                  const resultados = CATALOGO.filter(p =>
+                                    p.desc.toLowerCase().includes(ql) || p.id.toLowerCase().includes(ql)
+                                  ).slice(0, 20);
+                                  if (resultados.length === 0) {
+                                    return <div className="p-2 text-[11px] text-stone-500 italic">Ningún producto coincide</div>;
+                                  }
+                                  return resultados.map(p => (
+                                    <button key={p.id}
+                                      onClick={() => handleEditar(eq, p.id)}
+                                      className="w-full text-left p-2 text-xs hover:bg-violet-100 border-b border-stone-200 flex items-center gap-2">
+                                      <span className="font-bold flex-1">{p.desc}</span>
+                                      <span className="text-[10px] text-stone-500">{p.familia}</span>
+                                      <span className="text-[10px] font-mono text-violet-700">{p.id}</span>
+                                    </button>
+                                  ));
+                                })()}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -6316,21 +6553,45 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
     setBusquedaCambio("");
   };
 
-  const handleConfirmar = async () => {
-    if (!confirm("¿Aplicar todos los cambios confirmados al catálogo?")) return;
+  const handleConfirmar = async (forzar = false) => {
+    const esReaplicacion = factura.estado === "completado";
+
+    // Contar líneas sin decidir desde el frontend para poder avisar antes
+    const sinDecidir = lineas.filter(l => l.estado === "pendiente" || l.estado === "revisar");
+
+    if (sinDecidir.length > 0 && !forzar) {
+      const ok = confirm(
+        `⚠️ Tienes ${sinDecidir.length} línea${sinDecidir.length === 1 ? "" : "s"} sin decidir (pendiente o revisar).\n\n` +
+        `Esas líneas se IGNORARÁN al aplicar al catálogo (no actualizan precio ni crean producto).\n\n` +
+        `¿Quieres aplicar de todos modos?`
+      );
+      if (!ok) return;
+      forzar = true;
+    } else if (esReaplicacion) {
+      const ok = confirm(
+        `Esta factura YA está aplicada al catálogo. ¿Quieres re-aplicar los cambios?\n\n` +
+        `Los productos ya existentes se actualizarán con los nuevos datos.\n` +
+        `Las equivalencias incorrectas se sobrescribirán.`
+      );
+      if (!ok) return;
+    } else {
+      if (!confirm("¿Aplicar todos los cambios al catálogo?")) return;
+    }
+
     setConfirmando(true);
     try {
       const r = await fetch(FAC_URL + "/confirmar/" + factura.id, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-admin-pin": pin },
-        body: JSON.stringify({})
+        body: JSON.stringify({ forzar })
       });
       const data = await r.json();
-      if (!data.ok) throw new Error(data.error);
-      const saltadosTxt = data.saltados ? `, ${data.saltados} saltados (sin decidir)` : "";
-      alert(`✅ Aplicado: ${data.actualizados} precios actualizados, ${data.nuevos} productos nuevos, ${data.ignorados} ignorados${saltadosTxt}`);
+      if (!r.ok || !data.ok) throw new Error(data.error || "Error desconocido");
+      const saltadosTxt = data.saltados ? `, ${data.saltados} saltadas` : "";
+      const reTxt = data.esReaplicacion ? " (re-aplicación)" : "";
+      alert(`✅ Aplicado${reTxt}: ${data.actualizados} actualizados, ${data.nuevos} nuevos, ${data.ignorados} ignorados${saltadosTxt}`);
       recargar();
-    } catch (e) { alert("Error: " + e.message); }
+    } catch (e) { alert("Error al aplicar: " + e.message); }
     finally { setConfirmando(false); }
   };
 
@@ -6998,11 +7259,40 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
               )}
 
               {factura.estado === "pendiente_revision" && (
-                <button onClick={handleConfirmar} disabled={confirmando}
+                <button onClick={() => handleConfirmar(false)} disabled={confirmando}
                         className={`w-full p-4 font-black text-sm tracking-widest border-2 border-stone-900 ${confirmando ? "bg-stone-300 cursor-wait" : "bg-emerald-700 text-white hover:bg-emerald-800"}`}
                         style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
                   {confirmando ? "APLICANDO..." : "✓ APLICAR AL CATÁLOGO"}
                 </button>
+              )}
+
+              {factura.estado === "completado" && (
+                <div className="space-y-2">
+                  <div className="bg-emerald-50 border-2 border-emerald-700 p-2 text-[11px] text-emerald-900 flex items-start gap-2">
+                    <span className="text-base">✅</span>
+                    <div className="flex-1">
+                      <b>Factura ya aplicada al catálogo.</b>
+                      {factura.resumen && (
+                        <span className="block opacity-80 mt-0.5">
+                          Resultado: {factura.resumen.actualizados} precios actualizados, {factura.resumen.nuevos} productos nuevos
+                          {factura.resumen.ignorados > 0 && `, ${factura.resumen.ignorados} ignorados`}
+                          {factura.resumen.saltados > 0 && `, ${factura.resumen.saltados} saltados`}.
+                        </span>
+                      )}
+                      {factura.historialAplicaciones && factura.historialAplicaciones.length > 1 && (
+                        <span className="block opacity-70 text-[10px] mt-0.5">
+                          Aplicada {factura.historialAplicaciones.length} veces (la última: {new Date(factura.historialAplicaciones[factura.historialAplicaciones.length - 1].fecha).toLocaleString("es-ES")})
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <button onClick={() => handleConfirmar(false)} disabled={confirmando}
+                          title="Vuelve a aplicar la factura al catálogo. Útil si has detectado errores y los has corregido."
+                          className={`w-full p-3 font-black text-xs tracking-widest border-2 border-stone-900 ${confirmando ? "bg-stone-300 cursor-wait" : "bg-amber-500 text-stone-900 hover:bg-amber-400"}`}
+                          style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+                    {confirmando ? "RE-APLICANDO..." : "🔄 RE-APLICAR AL CATÁLOGO"}
+                  </button>
+                </div>
               )}
             </>
           )}
