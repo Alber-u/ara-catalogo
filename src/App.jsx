@@ -5674,10 +5674,10 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
 
       // Tabla compacta del top — formato visual destacado
       for (const p of top) {
-        if (y > PH - 50) { doc.addPage(); y = 18; }
+        if (y > PH - 56) { doc.addPage(); y = 18; }
 
-        // Cuadro por producto
-        const altoBox = 22;
+        // Cuadro por producto (más alto para incluir línea de facturas)
+        const altoBox = 28;
         doc.setFillColor(255, 248, 240); doc.setDrawColor(180, 100, 0); doc.setLineWidth(0.4);
         doc.rect(ML, y, W, altoBox, "FD");
 
@@ -5704,6 +5704,29 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
         doc.setFontSize(7.5);
         doc.text(`Apariciones: ${p.apariciones.length} ${p.apariciones.length === 1 ? "factura" : "facturas"}`, ML + 75, y + 14);
         doc.text(`Cantidad total: ${p.cantTotal.toFixed(0)} ${p.unidad}`, ML + 75, y + 18);
+
+        // Línea de facturas afectadas (truncada si son muchas)
+        const numsFact = p.apariciones.map(a => a.numFact).filter(Boolean);
+        const maxMostrar = 6;
+        let textoFacturas;
+        if (numsFact.length === 0) {
+          textoFacturas = "—";
+        } else if (numsFact.length <= maxMostrar) {
+          textoFacturas = numsFact.join(", ");
+        } else {
+          textoFacturas = numsFact.slice(0, maxMostrar).join(", ") + `, +${numsFact.length - maxMostrar} más`;
+        }
+        doc.setFontSize(7); doc.setTextColor(80);
+        doc.text(`Facturas afectadas:`, ML + 3, y + 24);
+        doc.setFont("helvetica", "bold"); doc.setTextColor(0);
+        // Recortar si excede el ancho disponible
+        const maxAnchoFacturas = W - 35;
+        let txtFinal = textoFacturas;
+        while (doc.getTextWidth(txtFinal) > maxAnchoFacturas && txtFinal.length > 10) {
+          txtFinal = txtFinal.substring(0, txtFinal.length - 5) + "…";
+        }
+        doc.text(txtFinal, ML + 30, y + 24);
+        doc.setFont("helvetica", "normal");
 
         // Subida % e impacto a la derecha (destacado)
         doc.setFont("helvetica", "bold"); doc.setFontSize(11); doc.setTextColor(180, 0, 0);
@@ -5734,6 +5757,87 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
     doc.setFont("helvetica", "italic"); doc.setFontSize(7); doc.setTextColor(100);
     doc.text("Quedamos a la espera de su respuesta a la mayor brevedad posible.", ML, y);
     doc.setTextColor(0); y += 6;
+
+    // ═══ SECCIÓN: DESGLOSE FACTURA POR FACTURA DEL TOP ═══
+    if (top.length > 0) {
+      doc.addPage();
+      y = 18;
+
+      // Cabecera
+      doc.setFillColor(20); doc.rect(0, 0, PW, 12, "F");
+      doc.setTextColor(255, 200, 0); doc.setFont("helvetica", "bold"); doc.setFontSize(8);
+      doc.text("DESGLOSE FACTURA POR FACTURA · PRINCIPALES DESVIACIONES", ML, 7);
+      doc.setFontSize(7); doc.setTextColor(255);
+      doc.text(`${proveedor} · ${fechaIni} - ${fechaFin}`, ML, 10);
+      doc.setTextColor(0);
+
+      doc.setFont("helvetica", "italic"); doc.setFontSize(7.5); doc.setTextColor(100);
+      doc.text("Detalle de cada aparición de los productos del top, con factura, fecha, cantidad y sobrecoste de la línea.", ML, y);
+      doc.setTextColor(0); y += 7;
+
+      for (const p of top) {
+        // Si no cabe el bloque mínimo del producto, salta de página
+        const altoMinProducto = 16 + (p.apariciones.length * 4);
+        if (y + altoMinProducto > PH - 18) { doc.addPage(); y = 18; }
+
+        // Cabecera del producto
+        doc.setFillColor(245, 235, 220); doc.setDrawColor(180, 100, 0); doc.setLineWidth(0.3);
+        doc.rect(ML, y, W, 8, "FD");
+        doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.setTextColor(0);
+        const nombreProducto = (p.descCat || p.descFact).substring(0, 70);
+        doc.text(nombreProducto, ML + 2, y + 4);
+        doc.setFontSize(7); doc.setTextColor(100); doc.setFont("helvetica", "normal");
+        doc.text(`Ref ${p.ref || "—"}`, ML + 2, y + 7);
+        // Subtotal a la derecha
+        doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.setTextColor(180, 0, 0);
+        doc.text(`Sobrecoste total: ${p.impactoTotal >= 0 ? "+" : ""}EUR ${p.impactoTotal.toFixed(2)}`, PW - MR - 2, y + 5, { align: "right" });
+        doc.setTextColor(0); doc.setFont("helvetica", "normal");
+        y += 9;
+
+        // Cabecera de la sub-tabla
+        const sc = { fec: ML + 2, fac: ML + 22, cant: ML + 70, pant: ML + 90, pnue: ML + 115, dif: ML + 140, sobre: ML + 165 };
+        doc.setFillColor(60); doc.setTextColor(255); doc.setFont("helvetica", "bold"); doc.setFontSize(7);
+        doc.rect(ML, y - 2.5, W, 4, "F");
+        doc.text("Fecha",         sc.fec,   y);
+        doc.text("Nº Factura",    sc.fac,   y);
+        doc.text("Cant.",         sc.cant,  y, { align: "right" });
+        doc.text("P. anterior",   sc.pant,  y, { align: "right" });
+        doc.text("P. facturado",  sc.pnue,  y, { align: "right" });
+        doc.text("Dif/u",         sc.dif,   y, { align: "right" });
+        doc.text("Sobrecoste",    PW - MR - 2, y, { align: "right" });
+        y += 3;
+        doc.setTextColor(0); doc.setFont("helvetica", "normal"); doc.setFontSize(6.8);
+
+        // Líneas ordenadas por fecha
+        const apsOrd = p.apariciones.slice().sort((a, b) => (a.fecha || "").localeCompare(b.fecha || ""));
+        for (const a of apsOrd) {
+          if (y > PH - 14) {
+            doc.addPage(); y = 18;
+            // Repetir cabecera del producto en la nueva página (versión compacta)
+            doc.setFillColor(245, 235, 220); doc.setDrawColor(180, 100, 0); doc.setLineWidth(0.3);
+            doc.rect(ML, y, W, 6, "FD");
+            doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(0);
+            doc.text(`${nombreProducto} (continuación)`, ML + 2, y + 4); y += 7;
+            doc.setFont("helvetica", "normal"); doc.setFontSize(6.8);
+          }
+          const fechaTxt = a.fecha ? new Date(a.fecha).toLocaleDateString("es-ES") : "—";
+          const facTxt = a.numFact || (a.facturaNombre || "").substring(0, 24);
+          doc.text(fechaTxt, sc.fec, y);
+          doc.text(facTxt.substring(0, 28), sc.fac, y);
+          doc.text(`${a.cantidad}`, sc.cant, y, { align: "right" });
+          doc.text(a.precioActual !== null ? `EUR ${a.precioActual.toFixed(4)}` : "—", sc.pant, y, { align: "right" });
+          doc.text(`EUR ${a.precioFactura.toFixed(4)}`, sc.pnue, y, { align: "right" });
+          if (a.diff > 0.0001) doc.setTextColor(180, 0, 0);
+          else if (a.diff < -0.0001) doc.setTextColor(0, 130, 0);
+          doc.text(`${a.diff >= 0 ? "+" : ""}${a.diff.toFixed(4)}`, sc.dif, y, { align: "right" });
+          doc.setFont("helvetica", "bold");
+          doc.text(`${a.impacto >= 0 ? "+" : ""}EUR ${a.impacto.toFixed(2)}`, PW - MR - 2, y, { align: "right" });
+          doc.setFont("helvetica", "normal"); doc.setTextColor(0);
+          y += 3.5;
+        }
+        y += 4;
+      }
+    }
 
     // ═══ ANEXO: TABLA COMPLETA ═══
     if (lista.length > 0) {
