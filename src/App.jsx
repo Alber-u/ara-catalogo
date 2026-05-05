@@ -2075,25 +2075,19 @@ function CatalogoApp({ usuario, onLogout }) {
       // Adaptar líneas al formato que espera el backend
       const linAqua = lineasCarrito.filter(l => l.prov === "aqua").map(l => ({
         ref: l.proveedor.ref,
-        desc: l.esMetrosSueltos ? `${l.producto.desc} (metros sueltos)` : l.producto.desc,
+        desc: l.producto.desc,
         cantidad: l.cantidad,
-        unidad: l.esMetrosSueltos ? "m" : l.producto.unidad,
+        unidad: l.producto.unidad,
         precioUnit: l.neto,
-        importe: l.subtotal,
-        mPorUnidad: l.mPorUnidad,
-        metros: l.metros,
-        esMetrosSueltos: !!l.esMetrosSueltos
+        importe: l.subtotal
       }));
       const linAram = lineasCarrito.filter(l => l.prov === "aram").map(l => ({
         ref: l.proveedor.ref,
-        desc: l.esMetrosSueltos ? `${l.producto.desc} (metros sueltos)` : l.producto.desc,
+        desc: l.producto.desc,
         cantidad: l.cantidad,
-        unidad: l.esMetrosSueltos ? "m" : l.producto.unidad,
+        unidad: l.producto.unidad,
         precioUnit: l.neto,
-        importe: l.subtotal,
-        mPorUnidad: l.mPorUnidad,
-        metros: l.metros,
-        esMetrosSueltos: !!l.esMetrosSueltos
+        importe: l.subtotal
       }));
 
       const r = await fetch(BACKEND_URL + "/enviar-pedido", {
@@ -3499,7 +3493,7 @@ function PanelAdmin({ pin, onSalir }) {
         {pestaña === "obras"     && <PestañaObras data={data} api={api} reload={recargarTodo} />}
         {pestaña === "operarios" && <PestañaOperarios data={data} api={api} reload={recargarTodo} />}
         {pestaña === "proveedores" && <PestañaProveedores data={data} api={api} reload={recargarTodo} />}
-        {pestaña === "pedidos"   && <PestañaPedidos data={data} />}
+        {pestaña === "pedidos"   && <PestañaPedidos data={data} api={api} reload={recargarTodo} />}
         {pestaña === "config"    && <PestañaConfig data={data} api={api} reload={recargarTodo} pin={pin} onSalir={onSalir} />}
       </div>
     </div>
@@ -4755,7 +4749,7 @@ function PestañaOperarios({ data, api, reload }) {
 // =========================================================
 //  PESTAÑA PEDIDOS
 // =========================================================
-function PestañaPedidos({ data }) {
+function PestañaPedidos({ data, api, reload }) {
   const [filtroObra, setFiltroObra] = useState("");
   const [filtroOp, setFiltroOp] = useState("");
   const [pedidoSel, setPedidoSel] = useState(null);
@@ -4832,110 +4826,385 @@ function PestañaPedidos({ data }) {
         })}
       </div>
 
-      {pedidoSel && <ModalDetallePedido pedido={pedidoSel} onCerrar={() => setPedidoSel(null)} />}
+      {pedidoSel && <ModalDetallePedido pedido={pedidoSel} api={api} reload={reload} proveedores={data.proveedores || PROVEEDORES_SEED} onCerrar={() => setPedidoSel(null)} />}
     </div>
   );
 }
 
-function ModalDetallePedido({ pedido, onCerrar }) {
-  const totA = (pedido.lineasAqua || []).reduce((s, l) => s + (l.importe || 0), 0);
-  const totR = (pedido.lineasAram || []).reduce((s, l) => s + (l.importe || 0), 0);
+function ModalDetallePedido({ pedido, api, reload, proveedores, onCerrar }) {
+  const provList = proveedores || PROVEEDORES_SEED;
+  const [lineasAqua, setLineasAqua] = useState(pedido.lineasAqua || []);
+  const [lineasAram, setLineasAram] = useState(pedido.lineasAram || []);
+  const [lineasNoList, setLineasNoList] = useState(pedido.lineasNoListado || []);
+  const [notas, setNotas] = useState(pedido.notas || "");
+  const [guardando, setGuardando] = useState(false);
+  const [busqueda, setBusqueda] = useState("");
+  const [mostrarBuscador, setMostrarBuscador] = useState(false);
+  const [provBuscador, setProvBuscador] = useState(provList[0]?.id || "aqua");
+  const [añadirManual, setAñadirManual] = useState(false);
+  const [manual, setManual] = useState({ desc: "", cantidad: 1, unidad: "uni", precioUnit: "", prov: provList[0]?.id || "aqua" });
+
+  const productosFiltrados = busqueda.length > 1
+    ? CATALOGO.filter(p => p.desc.toLowerCase().includes(busqueda.toLowerCase()) || (p.proveedores?.[provBuscador]?.ref || "").toLowerCase().includes(busqueda.toLowerCase())).slice(0, 8)
+    : [];
+
+  // Build datosPedido for PDF/WA
+  const buildDatos = () => {
+    const totalAqua = lineasAqua.reduce((s, l) => s + (l.importe || 0), 0);
+    const totalAram = lineasAram.reduce((s, l) => s + (l.importe || 0), 0);
+    return {
+      pedidoId: pedido.id,
+      fechaIso: pedido.fecha,
+      operario: pedido.operario,
+      obra: pedido.obra,
+      lineasAqua, lineasAram,
+      lineasNoListado: lineasNoList,
+      notas,
+      totalAqua, totalAram,
+      totalGeneral: totalAqua + totalAram,
+      ivaAqua: totalAqua * 0.21,
+      ivaAram: totalAram * 0.21,
+    };
+  };
+
+  const getProvNombreLocal = (id) => provList.find(p => p.id === id)?.nombre || id;
+
+  const handleGuardar = async () => {
+    setGuardando(true);
+    try {
+      await api.put("/admin/pedido/" + pedido.id, {
+        lineasAqua, lineasAram, lineasNoListado: lineasNoList, notas
+      });
+      reload();
+      onCerrar();
+    } catch (e) {
+      alert("Error guardando: " + e.message);
+    } finally { setGuardando(false); }
+  };
+
+  const updateLinea = (prov, idx, field, val) => {
+    const setter = prov === "aqua" ? setLineasAqua : setLineasAram;
+    setter(prev => prev.map((l, i) => {
+      if (i !== idx) return l;
+      const updated = { ...l, [field]: field === "cantidad" || field === "precioUnit" ? parseFloat(val) || 0 : val };
+      updated.importe = +(updated.cantidad * (updated.precioUnit || 0)).toFixed(2);
+      return updated;
+    }));
+  };
+
+  const removeLinea = (prov, idx) => {
+    const setter = prov === "aqua" ? setLineasAqua : setLineasAram;
+    setter(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const addFromCatalog = (producto) => {
+    const provData = producto.proveedores?.[provBuscador];
+    if (!provData) { alert(`Este producto no tiene precio para ${getProvNombreLocal(provBuscador)}`); return; }
+    const neto = precioNeto(provData);
+    const newLine = { ref: provData.ref, desc: producto.desc, cantidad: 1, unidad: producto.unidad, precioUnit: neto, importe: neto };
+    if (provBuscador === "aqua") setLineasAqua(prev => [...prev, newLine]);
+    else setLineasAram(prev => [...prev, newLine]);
+    setBusqueda(""); setMostrarBuscador(false);
+  };
+
+  const addManual = () => {
+    if (!manual.desc.trim() || !manual.precioUnit) return;
+    const neto = parseFloat(manual.precioUnit);
+    const newLine = { ref: "—", desc: manual.desc, cantidad: parseFloat(manual.cantidad) || 1, unidad: manual.unidad, precioUnit: neto, importe: +(neto * (parseFloat(manual.cantidad) || 1)).toFixed(2) };
+    if (manual.prov === "aqua") setLineasAqua(prev => [...prev, newLine]);
+    else setLineasAram(prev => [...prev, newLine]);
+    setManual({ desc: "", cantidad: 1, unidad: "uni", precioUnit: "", prov: manual.prov });
+    setAñadirManual(false);
+  };
+
+  const totA = lineasAqua.reduce((s, l) => s + (l.importe || 0), 0);
+  const totR = lineasAram.reduce((s, l) => s + (l.importe || 0), 0);
+
+  // PDF generation
+  const handlePDF = async (prov) => {
+    const d = buildDatos();
+    // Temporarily set datosPedidoEnviado equivalent and call descargarPDF
+    // We'll generate inline using the same logic
+    let jsPDFmod;
+    try { jsPDFmod = await import("jspdf"); } catch(e) { alert("No se pudo cargar PDF"); return; }
+    const { jsPDF } = jsPDFmod;
+    const doc = new jsPDF({ unit: "mm", format: "a4" });
+    let y = 15;
+    const esCompleto = prov === "completo";
+    const provObj = provList.find(p => p.id === prov);
+    const nombreProv = esCompleto ? "TODOS LOS PROVEEDORES" : (provObj?.nombre?.toUpperCase() || prov.toUpperCase());
+
+    doc.setFont("helvetica", "bold"); doc.setFontSize(16);
+    doc.text(`PEDIDO · ARA CORPORATE${esCompleto ? "" : " → " + nombreProv}`, 105, y, { align: "center" }); y += 6;
+    doc.setFontSize(9); doc.setFont("helvetica", "normal");
+    doc.text("ARA Corporate Sociedad de Inversiones, SL · CIF B90488222", 105, y, { align: "center" }); y += 4;
+    doc.text("Avd San Francisco Javier 9 P6 M9, 41018 Sevilla · Tel 640527426", 105, y, { align: "center" }); y += 8;
+    doc.setDrawColor(0); doc.setLineWidth(0.5); doc.line(15, y, 195, y); y += 6;
+
+    doc.setFont("helvetica", "bold"); doc.setFontSize(10);
+    doc.text("DATOS DEL PEDIDO", 15, y); y += 5;
+    doc.setFont("helvetica", "normal"); doc.setFontSize(9);
+    doc.text(`Fecha:     ${new Date(d.fechaIso).toLocaleDateString("es-ES", { dateStyle: "long" })}`, 15, y); y += 4;
+    doc.text(`Obra:      ${d.obra?.nombre || "-"}`, 15, y); y += 4;
+    doc.text(`Solicita:  ${d.operario}`, 15, y); y += 4;
+    doc.text(`Pedido ID: ${d.pedidoId}`, 15, y); y += 8;
+
+    const pintarLineas = (titulo, lineas, total, iva, formaPago) => {
+      if (!lineas || lineas.length === 0) return;
+      if (y > 240) { doc.addPage(); y = 20; }
+      doc.setFont("helvetica", "bold"); doc.setFontSize(11);
+      doc.text(titulo, 15, y); y += 5;
+      doc.setFillColor(230); doc.rect(15, y - 4, 180, 6, "F");
+      doc.setFont("helvetica", "bold"); doc.setFontSize(8);
+      doc.text("Cant", 17, y); doc.text("Ref", 32, y); doc.text("Descripcion", 60, y);
+      doc.text("P.unit", 152, y, { align: "right" }); doc.text("Importe", 192, y, { align: "right" }); y += 4;
+      doc.setFont("helvetica", "normal");
+      lineas.forEach(l => {
+        if (y > 270) { doc.addPage(); y = 20; }
+        const desc = (l.desc || "").length > 55 ? l.desc.substring(0, 53) + ".." : (l.desc || "");
+        doc.text(String(l.cantidad), 17, y); doc.text(String(l.ref || "-"), 32, y);
+        doc.text(desc, 60, y);
+        doc.text("EUR" + (l.precioUnit || 0).toFixed(2), 152, y, { align: "right" });
+        doc.text("EUR" + (l.importe || 0).toFixed(2), 192, y, { align: "right" }); y += 3.5;
+        if (l.metros || l.esMetrosSueltos) {
+          const nota = l.esMetrosSueltos ? ">> metros sueltos" : `>> ${l.cantidad} ${l.unidad} (${l.metros}m)`;
+          doc.setFont("helvetica", "italic"); doc.setFontSize(7); doc.setTextColor(100);
+          doc.text(nota, 62, y); y += 3.5;
+          doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(0);
+        }
+      });
+      y += 2; doc.line(120, y, 195, y); y += 4;
+      doc.setFont("helvetica", "normal"); doc.setFontSize(8);
+      doc.text(`Subtotal: EUR${total.toFixed(2)}`, 192, y, { align: "right" }); y += 4;
+      doc.text(`IVA 21%:  EUR${iva.toFixed(2)}`, 192, y, { align: "right" }); y += 4;
+      doc.setFont("helvetica", "bold");
+      doc.text(`TOTAL:    EUR${(total + iva).toFixed(2)}`, 192, y, { align: "right" }); y += 4;
+      if (formaPago) { doc.setFont("helvetica", "italic"); doc.setFontSize(7); doc.text(`Forma de pago: ${formaPago}`, 192, y, { align: "right" }); y += 6; }
+    };
+
+    if (esCompleto || prov === "aqua") pintarLineas(`LINEAS - ${provList.find(p=>p.id==="aqua")?.nombre?.toUpperCase()||"AQUATUBO"}`, d.lineasAqua, d.totalAqua, d.ivaAqua, provList.find(p=>p.id==="aqua")?.formaPago || "");
+    if (esCompleto || prov === "aram") pintarLineas(`LINEAS - ${provList.find(p=>p.id==="aram")?.nombre?.toUpperCase()||"ARAMBURU"}`, d.lineasAram, d.totalAram, d.ivaAram, provList.find(p=>p.id==="aram")?.formaPago || "");
+
+    if (notas) {
+      if (y > 240) { doc.addPage(); y = 20; }
+      doc.setFont("helvetica", "bold"); doc.setFontSize(11);
+      doc.text("NOTAS", 15, y); y += 5;
+      doc.setFont("helvetica", "normal"); doc.setFontSize(9);
+      doc.splitTextToSize(notas, 175).forEach(ln => { doc.text(ln, 15, y); y += 4; });
+    }
+
+    if (y > 250) { doc.addPage(); y = 20; }
+    doc.setFillColor(255, 200, 0); doc.rect(15, y, 180, 12, "F");
+    doc.setFont("helvetica", "bold"); doc.setFontSize(14);
+    doc.text(`TOTAL: EUR${((d.totalAqua + d.totalAram) * 1.21).toFixed(2)} IVA inc.`, 105, y + 8, { align: "center" });
+
+    doc.save(`Pedido_${d.pedidoId}_${prov.toUpperCase()}.pdf`);
+  };
+
+  const handleWA = (prov) => {
+    const d = buildDatos();
+    const lineas = prov === "aqua" ? d.lineasAqua : prov === "aram" ? d.lineasAram : [...d.lineasAqua, ...d.lineasAram];
+    const fecha = new Date(d.fechaIso).toLocaleDateString("es-ES");
+    let txt = `*PEDIDO ARA CORPORATE*\n`;
+    txt += `Obra: ${d.obra?.nombre}\nFecha: ${fecha}\nSolicita: ${d.operario}\n\n`;
+    lineas.forEach(l => { const mu = l.metros ? ` (${l.metros}m)` : ""; txt += `• ${l.cantidad} ${l.unidad}${mu} · ${l.desc} (ref ${l.ref}) — EUR${(l.importe||0).toFixed(2)}\n`; });
+    txt += `\nTOTAL: EUR${((d.totalAqua + d.totalAram) * 1.21).toFixed(2)} IVA inc.`;
+    if (notas) txt += `\n\nNotas: ${notas}`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(txt)}`, "_blank");
+  };
+
+  const renderLineas = (prov, lineas) => {
+    const col = prov === "aqua" ? "emerald" : "amber";
+    const total = lineas.reduce((s, l) => s + (l.importe || 0), 0);
+    const nombre = getProvNombreLocal(prov);
+    return (
+      <div className={`border-2 border-${col}-700`}>
+        <div className={`bg-${col}-700 text-white p-2 text-xs font-bold tracking-widest flex justify-between`}>
+          <span>{nombre.toUpperCase()} · EUR{total.toFixed(2)}</span>
+        </div>
+        <div className="divide-y">
+          {lineas.map((l, i) => (
+            <div key={i} className="p-2 text-xs gap-2">
+              <div className="flex items-start gap-2">
+                <div className="flex-1">
+                  <div className="font-mono text-[10px] text-stone-500">{l.ref}</div>
+                  <div className="font-medium">{l.desc}</div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <input type="number" min="0" step="0.1" value={l.cantidad}
+                    onChange={(e) => updateLinea(prov, i, "cantidad", e.target.value)}
+                    className="w-14 border border-stone-400 p-1 text-xs text-center font-mono focus:outline-none focus:border-stone-900" />
+                  <span className="text-stone-500 text-[10px]">{l.unidad}</span>
+                  <span className="text-stone-500 text-[10px]">x</span>
+                  <input type="number" min="0" step="0.001" value={l.precioUnit}
+                    onChange={(e) => updateLinea(prov, i, "precioUnit", e.target.value)}
+                    className="w-16 border border-stone-400 p-1 text-xs text-center font-mono focus:outline-none focus:border-stone-900" />
+                  <span className="font-bold text-[10px] w-14 text-right">EUR{(l.importe||0).toFixed(2)}</span>
+                  <button onClick={() => removeLinea(prov, i)} className="text-red-600 hover:text-red-800 p-0.5">
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div className="absolute inset-0 bg-stone-900/50" onClick={onCerrar} />
-      <div className="relative bg-white border-4 border-stone-900 w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-[8px_8px_0_0_rgba(0,0,0,1)]">
+      <div className="relative bg-white border-4 border-stone-900 w-full max-w-3xl max-h-[95vh] overflow-y-auto shadow-[8px_8px_0_0_rgba(0,0,0,1)]">
+        {/* Header */}
         <div className="bg-amber-500 border-b-4 border-stone-900 p-3 flex items-center justify-between sticky top-0 z-10">
           <div>
             <h3 className="font-black text-base" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
               PEDIDO {pedido.id}
             </h3>
-            <div className="text-[10px]">{new Date(pedido.fecha).toLocaleString("es-ES")}</div>
+            <div className="text-[10px]">{new Date(pedido.fecha).toLocaleString("es-ES")} · {pedido.operario} · {pedido.obra?.nombre}</div>
           </div>
           <button onClick={onCerrar} className="bg-stone-900 text-amber-400 p-1.5 border-2 border-stone-900">
             <X className="w-4 h-4" />
           </button>
         </div>
-        <div className="p-4 space-y-3 text-sm">
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <div><strong>Obra:</strong> {pedido.obra?.nombre}</div>
-            <div><strong>Solicita:</strong> {pedido.operario}</div>
-            <div className="col-span-2 text-[10px] text-stone-500">{pedido.obra?.dir}</div>
-          </div>
 
-          {pedido.lineasAqua?.length > 0 && (
-            <div className="border-2 border-emerald-700">
-              <div className="bg-emerald-700 text-white p-2 text-xs font-bold tracking-widest">AQUATUBO · €{totA.toFixed(2)}</div>
-              <div className="divide-y">
-                {pedido.lineasAqua.map((l, i) => (
-                  <div key={i} className="p-2 text-xs flex justify-between gap-2">
-                    <div className="flex-1">
-                      <div className="font-mono text-[10px] text-stone-500">{l.ref}</div>
-                      <div>{l.desc}</div>
-                    </div>
-                    <div className="text-right shrink-0 font-mono">
-                      <div>{l.cantidad} × €{l.precioUnit?.toFixed(2)}</div>
-                      <div className="font-bold">€{l.importe?.toFixed(2)}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+        <div className="p-4 space-y-3">
+          {/* Líneas por proveedor */}
+          {renderLineas("aqua", lineasAqua)}
+          {renderLineas("aram", lineasAram)}
 
-          {pedido.lineasAram?.length > 0 && (
-            <div className="border-2 border-amber-700">
-              <div className="bg-amber-700 text-white p-2 text-xs font-bold tracking-widest">ARAMBURU · €{totR.toFixed(2)}</div>
-              <div className="divide-y">
-                {pedido.lineasAram.map((l, i) => (
-                  <div key={i} className="p-2 text-xs flex justify-between gap-2">
-                    <div className="flex-1">
-                      <div className="font-mono text-[10px] text-stone-500">{l.ref}</div>
-                      <div>{l.desc}</div>
-                    </div>
-                    <div className="text-right shrink-0 font-mono">
-                      <div>{l.cantidad} × €{l.precioUnit?.toFixed(2)}</div>
-                      <div className="font-bold">€{l.importe?.toFixed(2)}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {pedido.lineasNoListado?.length > 0 && (
+          {/* No listados */}
+          {lineasNoList.length > 0 && (
             <div className="border-2 border-stone-700 bg-stone-50">
               <div className="bg-stone-700 text-white p-2 text-xs font-bold tracking-widest">PRODUCTOS NO LISTADOS</div>
               <div className="divide-y">
-                {pedido.lineasNoListado.map((l, i) => (
-                  <div key={i} className="p-2 text-xs">
+                {lineasNoList.map((l, i) => (
+                  <div key={i} className="p-2 text-xs flex items-center justify-between gap-2">
                     <div>{l.cantidad} {l.unidad} · {l.desc}</div>
-                    {l.proveedor !== "indistinto" && <div className="text-[10px] text-stone-500">prov: {l.proveedor === "aqua" ? "Aquatubo" : "Aramburu"}</div>}
+                    <button onClick={() => setLineasNoList(prev => prev.filter((_,j)=>j!==i))} className="text-red-600"><X className="w-3 h-3" /></button>
                   </div>
                 ))}
               </div>
             </div>
           )}
 
-          {pedido.notas && (
-            <div className="border-2 border-stone-300 bg-amber-50 p-2 text-xs">
-              <div className="font-bold mb-1">📝 Notas:</div>
-              <div className="whitespace-pre-wrap">{pedido.notas}</div>
+          {/* Notas */}
+          <div>
+            <label className="text-[10px] font-bold text-stone-600 tracking-widest mb-1 block">NOTAS</label>
+            <textarea value={notas} onChange={(e) => setNotas(e.target.value)} rows={2}
+              className="w-full border-2 border-stone-900 p-2 text-sm focus:outline-none focus:bg-amber-50 font-mono resize-none" />
+          </div>
+
+          {/* Añadir del catálogo */}
+          <div className="border-2 border-stone-300 bg-stone-50 p-3">
+            <div className="text-[10px] font-bold text-stone-600 tracking-widest mb-2">+ AÑADIR DEL CATÁLOGO</div>
+            <div className="flex gap-2 mb-2">
+              <select value={provBuscador} onChange={(e) => setProvBuscador(e.target.value)}
+                      className="border-2 border-stone-900 p-1.5 text-xs font-mono focus:outline-none">
+                {provList.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+              </select>
+              <input type="text" placeholder="Buscar producto..." value={busqueda}
+                onChange={(e) => { setBusqueda(e.target.value); setMostrarBuscador(true); }}
+                onFocus={() => setMostrarBuscador(true)}
+                className="flex-1 border-2 border-stone-900 p-1.5 text-xs font-mono focus:outline-none focus:bg-amber-50" />
+            </div>
+            {mostrarBuscador && productosFiltrados.length > 0 && (
+              <div className="border-2 border-stone-900 bg-white divide-y max-h-48 overflow-y-auto">
+                {productosFiltrados.map(p => (
+                  <button key={p.id} onClick={() => addFromCatalog(p)}
+                    className="w-full text-left p-2 text-xs hover:bg-amber-50 flex justify-between gap-2">
+                    <div>
+                      <div className="font-mono text-[10px] text-stone-500">{p.proveedores?.[provBuscador]?.ref || "—"}</div>
+                      <div>{p.desc}</div>
+                    </div>
+                    <div className="font-bold shrink-0">
+                      {p.proveedores?.[provBuscador] ? `EUR${precioNeto(p.proveedores[provBuscador]).toFixed(2)}/${p.unidad}` : "Sin precio"}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Añadir manual */}
+          {!añadirManual ? (
+            <button onClick={() => setAñadirManual(true)}
+              className="w-full border-2 border-dashed border-stone-400 p-2 text-xs font-bold text-stone-500 hover:border-stone-900 hover:text-stone-900">
+              + AÑADIR LÍNEA MANUAL
+            </button>
+          ) : (
+            <div className="border-2 border-stone-900 bg-stone-50 p-3 space-y-2">
+              <div className="text-[10px] font-bold text-stone-600 tracking-widest">LÍNEA MANUAL</div>
+              <input type="text" placeholder="Descripción" value={manual.desc}
+                onChange={(e) => setManual(m => ({...m, desc: e.target.value}))}
+                className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:outline-none focus:bg-amber-50" />
+              <div className="grid grid-cols-4 gap-2">
+                <div>
+                  <label className="text-[9px] font-bold text-stone-600">CANT</label>
+                  <input type="number" value={manual.cantidad} min="0"
+                    onChange={(e) => setManual(m => ({...m, cantidad: e.target.value}))}
+                    className="w-full border-2 border-stone-900 p-1.5 text-xs font-mono focus:outline-none" />
+                </div>
+                <div>
+                  <label className="text-[9px] font-bold text-stone-600">UNIDAD</label>
+                  <select value={manual.unidad} onChange={(e) => setManual(m => ({...m, unidad: e.target.value}))}
+                    className="w-full border-2 border-stone-900 p-1.5 text-xs font-mono focus:outline-none">
+                    {["uni","m","rollo","barra","kg","L","caja"].map(u => <option key={u} value={u}>{u}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[9px] font-bold text-stone-600">PRECIO</label>
+                  <input type="number" step="0.001" placeholder="0.00" value={manual.precioUnit}
+                    onChange={(e) => setManual(m => ({...m, precioUnit: e.target.value}))}
+                    className="w-full border-2 border-stone-900 p-1.5 text-xs font-mono focus:outline-none" />
+                </div>
+                <div>
+                  <label className="text-[9px] font-bold text-stone-600">PROVEEDOR</label>
+                  <select value={manual.prov} onChange={(e) => setManual(m => ({...m, prov: e.target.value}))}
+                    className="w-full border-2 border-stone-900 p-1.5 text-xs font-mono focus:outline-none">
+                    {provList.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={addManual} className="px-3 py-1.5 text-xs font-black bg-stone-900 text-amber-400 border-2 border-stone-900 hover:bg-amber-400 hover:text-stone-900">+ AÑADIR</button>
+                <button onClick={() => setAñadirManual(false)} className="px-3 py-1.5 text-xs font-bold border-2 border-stone-900 bg-white hover:bg-stone-100">CANCELAR</button>
+              </div>
             </div>
           )}
 
+          {/* Total */}
           <div className="bg-stone-900 text-amber-400 p-3 flex justify-between items-baseline">
             <div className="text-xs tracking-widest">TOTAL c/IVA</div>
             <div className="font-black text-2xl" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
-              €{((totA + totR) * 1.21).toFixed(2)}
+              EUR{((totA + totR) * 1.21).toFixed(2)}
             </div>
           </div>
 
-          {pedido.proveedoresEnviados?.length > 0 && (
-            <div className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-700 p-2">
-              📧 Email enviado a: {pedido.proveedoresEnviados.join(", ")}
-            </div>
-          )}
+          {/* PDF y WhatsApp */}
+          <div className="text-[10px] font-bold text-stone-500 tracking-widest pt-1">DESCARGAR PDF</div>
+          <div className="grid grid-cols-3 gap-2">
+            <button onClick={() => handlePDF("aqua")} className="bg-stone-900 text-amber-400 p-2 text-[10px] font-black tracking-widest border-2 border-stone-900 hover:bg-amber-400 hover:text-stone-900">AQUATUBO</button>
+            <button onClick={() => handlePDF("aram")} className="bg-stone-700 text-amber-400 p-2 text-[10px] font-black tracking-widest border-2 border-stone-900 hover:bg-amber-400 hover:text-stone-900">ARAMBURU</button>
+            <button onClick={() => handlePDF("completo")} className="bg-amber-500 text-stone-900 p-2 text-[10px] font-black tracking-widest border-2 border-stone-900 hover:bg-amber-400">COMPLETO</button>
+          </div>
+          <div className="text-[10px] font-bold text-stone-500 tracking-widest">ENVIAR POR WHATSAPP</div>
+          <div className="grid grid-cols-3 gap-2">
+            <button onClick={() => handleWA("aqua")} className="bg-emerald-700 text-white p-2 text-[10px] font-black tracking-widest border-2 border-stone-900 hover:bg-emerald-800">AQUATUBO</button>
+            <button onClick={() => handleWA("aram")} className="bg-amber-700 text-white p-2 text-[10px] font-black tracking-widest border-2 border-stone-900 hover:bg-amber-800">ARAMBURU</button>
+            <button onClick={() => handleWA("completo")} className="bg-amber-500 text-stone-900 p-2 text-[10px] font-black tracking-widest border-2 border-stone-900 hover:bg-amber-400">COMPLETO</button>
+          </div>
+
+          {/* Guardar */}
+          <div className="flex gap-2 pt-2 border-t-2 border-stone-200">
+            <button onClick={onCerrar} className="flex-1 text-xs font-bold p-3 border-2 border-stone-900 bg-white hover:bg-stone-100">CANCELAR</button>
+            <button onClick={handleGuardar} disabled={guardando}
+              className={`flex-[2] text-xs font-black tracking-widest p-3 border-2 border-stone-900 ${guardando ? "bg-stone-300 cursor-wait" : "bg-stone-900 text-amber-400 hover:bg-amber-400 hover:text-stone-900"}`}
+              style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+              {guardando ? "GUARDANDO..." : "GUARDAR CAMBIOS"}
+            </button>
+          </div>
         </div>
       </div>
     </div>
