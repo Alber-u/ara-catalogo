@@ -5434,12 +5434,28 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
 
   const lineas = factura.lineasRevision || [];
   const [filtro, setFiltro] = useState("todo");
+  const [orden, setOrden]   = useState("factura"); // factura | impacto-sube | impacto-baja | pct-sube | pct-baja
   const pendientes  = lineas.filter(l => l.estado === "pendiente").length;
   const confirmadas = lineas.filter(l => l.estado === "confirmado").length;
   const nuevas      = lineas.filter(l => l.estado === "nuevo").length;
   const ignoradas   = lineas.filter(l => l.estado === "ignorado").length;
-  const subidas     = lineas.filter(l => l.variacionPrecio?.sube).length;
-  const bajadas     = lineas.filter(l => l.variacionPrecio?.baja).length;
+
+  // Impacto económico = diff_unitario × cantidad de la factura
+  // Ignoramos las líneas en estado "ignorado" para no contaminar las cifras
+  const impactoLinea = (l) => {
+    if (!l.variacionPrecio || l.estado === "ignorado") return 0;
+    const cant = parseFloat(l.lineaOriginal?.cantidad) || 0;
+    return l.variacionPrecio.diff * cant;
+  };
+  const lineasSube = lineas.filter(l => l.variacionPrecio?.sube && l.estado !== "ignorado");
+  const lineasBaja = lineas.filter(l => l.variacionPrecio?.baja && l.estado !== "ignorado");
+  const subidas     = lineasSube.length;
+  const bajadas     = lineasBaja.length;
+  const impactoSube = lineasSube.reduce((acc, l) => acc + impactoLinea(l), 0); // > 0
+  const impactoBaja = lineasBaja.reduce((acc, l) => acc + impactoLinea(l), 0); // < 0
+  const impactoNeto = impactoSube + impactoBaja;
+  const diffSubeUnit = lineasSube.reduce((acc, l) => acc + (l.variacionPrecio?.diff || 0), 0);
+  const diffBajaUnit = lineasBaja.reduce((acc, l) => acc + (l.variacionPrecio?.diff || 0), 0);
 
   const lineasFiltradas = lineas.filter(l => {
     if (filtro === "todo")       return true;
@@ -5450,6 +5466,13 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
     if (filtro === "sube")       return l.variacionPrecio?.sube;
     if (filtro === "baja")       return l.variacionPrecio?.baja;
     return true;
+  }).slice().sort((a, b) => {
+    if (orden === "factura")      return a.idx - b.idx;
+    if (orden === "impacto-sube") return impactoLinea(b) - impactoLinea(a);          // mayor subida primero
+    if (orden === "impacto-baja") return impactoLinea(a) - impactoLinea(b);          // mayor bajada (más negativo) primero
+    if (orden === "pct-sube")     return (b.variacionPrecio?.pct || 0) - (a.variacionPrecio?.pct || 0);
+    if (orden === "pct-baja")     return (a.variacionPrecio?.pct || 0) - (b.variacionPrecio?.pct || 0);
+    return a.idx - b.idx;
   });
 
   // Accion masiva — aplica a las líneas filtradas
@@ -5571,23 +5594,84 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
           {/* Revisión */}
           {(factura.estado === "pendiente_revision" || factura.estado === "completado") && lineas.length > 0 && (
             <>
+              {/* Alerta resumen de impacto económico */}
+              {(subidas > 0 || bajadas > 0) && (
+                <div className={`border-2 border-stone-900 p-2.5 flex items-center gap-3 ${
+                  impactoNeto > 0.01 ? "bg-red-50" :
+                  impactoNeto < -0.01 ? "bg-emerald-50" :
+                  "bg-stone-50"
+                }`}>
+                  <div className="text-2xl">
+                    {impactoNeto > 0.01 ? "📈" : impactoNeto < -0.01 ? "📉" : "⚖️"}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[9px] font-bold tracking-widest text-stone-600">IMPACTO NETO DE ESTA FACTURA</div>
+                    <div className="text-sm font-bold text-stone-900">
+                      {impactoNeto > 0.01 && (
+                        <span className="text-red-700">
+                          +€{impactoNeto.toFixed(2)} más caro que tus precios actuales
+                        </span>
+                      )}
+                      {impactoNeto < -0.01 && (
+                        <span className="text-emerald-700">
+                          €{impactoNeto.toFixed(2)} más barato que tus precios actuales
+                        </span>
+                      )}
+                      {Math.abs(impactoNeto) <= 0.01 && (
+                        <span className="text-stone-700">Sin variación neta significativa</span>
+                      )}
+                      <span className="text-[10px] text-stone-500 ml-2 font-normal">
+                        ({subidas} {subidas === 1 ? "subida" : "subidas"} · {bajadas} {bajadas === 1 ? "bajada" : "bajadas"})
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Filtros clickables */}
               <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 text-center">
                 {[
-                  { key: "todo",       label: "TODO",       val: lineas.length,  color: "bg-stone-900 text-amber-400",        active: "bg-stone-900 text-amber-400",       inactive: "bg-stone-100 text-stone-700 hover:bg-stone-200" },
-                  { key: "pendiente",  label: "PENDIENTES", val: pendientes,     color: "bg-amber-100 text-amber-800",         active: "bg-amber-500 text-white",           inactive: "bg-amber-50 text-amber-800 hover:bg-amber-100"  },
-                  { key: "confirmado", label: "CONFIRM.",   val: confirmadas,    color: "bg-emerald-100 text-emerald-800",     active: "bg-emerald-600 text-white",         inactive: "bg-emerald-50 text-emerald-800 hover:bg-emerald-100" },
-                  { key: "nuevo",      label: "NUEVAS",     val: nuevas,         color: "bg-blue-100 text-blue-800",           active: "bg-blue-600 text-white",            inactive: "bg-blue-50 text-blue-800 hover:bg-blue-100"    },
-                  { key: "sube",       label: "▲ SUBEN",    val: subidas,        color: "bg-red-100 text-red-800",             active: "bg-red-600 text-white",             inactive: "bg-red-50 text-red-800 hover:bg-red-100"       },
-                  { key: "baja",       label: "▼ BAJAN",    val: bajadas,        color: "bg-green-100 text-green-800",         active: "bg-green-600 text-white",           inactive: "bg-green-50 text-green-800 hover:bg-green-100" },
+                  { key: "todo",       label: "TODO",       val: lineas.length,  extra: null,                                                            active: "bg-stone-900 text-amber-400",       inactive: "bg-stone-100 text-stone-700 hover:bg-stone-200" },
+                  { key: "pendiente",  label: "PENDIENTES", val: pendientes,     extra: null,                                                            active: "bg-amber-500 text-white",           inactive: "bg-amber-50 text-amber-800 hover:bg-amber-100"  },
+                  { key: "confirmado", label: "CONFIRM.",   val: confirmadas,    extra: null,                                                            active: "bg-emerald-600 text-white",         inactive: "bg-emerald-50 text-emerald-800 hover:bg-emerald-100" },
+                  { key: "nuevo",      label: "NUEVAS",     val: nuevas,         extra: null,                                                            active: "bg-blue-600 text-white",            inactive: "bg-blue-50 text-blue-800 hover:bg-blue-100"    },
+                  { key: "sube",       label: "▲ SUBEN",    val: subidas,        extra: subidas > 0 ? { tot: `+€${impactoSube.toFixed(2)}`,  unit: `+€${diffSubeUnit.toFixed(3)}/ud` } : null, active: "bg-red-600 text-white",             inactive: "bg-red-50 text-red-800 hover:bg-red-100"       },
+                  { key: "baja",       label: "▼ BAJAN",    val: bajadas,        extra: bajadas > 0 ? { tot: `€${impactoBaja.toFixed(2)}`,    unit: `€${diffBajaUnit.toFixed(3)}/ud` }  : null, active: "bg-green-600 text-white",           inactive: "bg-green-50 text-green-800 hover:bg-green-100" },
                 ].map(s => (
                   <button key={s.key} onClick={() => setFiltro(f => f === s.key ? "todo" : s.key)}
                     className={`p-2 border-2 border-stone-900 transition-all ${filtro === s.key ? s.active : s.inactive}`}>
-                    <div className="font-black text-xl">{s.val}</div>
-                    <div className="text-[9px] font-bold tracking-widest">{s.label}</div>
+                    <div className="font-black text-xl leading-none">{s.val}</div>
+                    <div className="text-[9px] font-bold tracking-widest mt-0.5">{s.label}</div>
+                    {s.extra && (
+                      <div className="mt-1 leading-tight">
+                        <div className="text-[10px] font-black font-mono">{s.extra.tot}</div>
+                        <div className="text-[8px] font-mono opacity-75">{s.extra.unit}</div>
+                      </div>
+                    )}
                   </button>
                 ))}
               </div>
+
+              {/* Selector de orden — solo cuando hay variaciones */}
+              {(subidas > 0 || bajadas > 0) && (
+                <div className="flex flex-wrap items-center gap-1.5 bg-stone-50 border-2 border-stone-900 p-2">
+                  <span className="text-[10px] font-bold tracking-widest text-stone-600 mr-1">ORDENAR:</span>
+                  {[
+                    { key: "factura",      label: "Orden factura" },
+                    { key: "impacto-sube", label: "▲ Mayor € subida" },
+                    { key: "impacto-baja", label: "▼ Mayor € bajada" },
+                    { key: "pct-sube",     label: "▲ Mayor % subida" },
+                    { key: "pct-baja",     label: "▼ Mayor % bajada" },
+                  ].map(o => (
+                    <button key={o.key} onClick={() => setOrden(o.key)}
+                      className={`px-2 py-1 text-[10px] font-bold border border-stone-900 transition-all ${
+                        orden === o.key ? "bg-stone-900 text-amber-400" : "bg-white text-stone-700 hover:bg-stone-100"
+                      }`}>
+                      {o.label}
+                    </button>
+                  ))}
+                </div>
+              )}
 
               {/* Acciones masivas sobre filtro activo */}
               {filtro !== "todo" && lineasFiltradas.length > 0 && (
