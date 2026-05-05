@@ -5088,6 +5088,9 @@ function PestañaFacturas({ api, pin }) {
   const [cargando, setCargando] = useState(true);
   const [subiendo, setSubiendo] = useState(false);
   const [facturaAbierta, setFacturaAbierta] = useState(null);
+  const [busqueda, setBusqueda] = useState("");
+  const [filtroProveedor, setFiltroProveedor] = useState("todos");
+  const [filtroEstado, setFiltroEstado] = useState("todos");
   const fileRef = useRef(null);
   const FAC_URL = "https://araujo-bot.onrender.com/api/facturas";
 
@@ -5106,7 +5109,8 @@ function PestañaFacturas({ api, pin }) {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
     setSubiendo(true);
-    let okCount = 0, errCount = 0;
+    let okCount = 0, errCount = 0, dupCount = 0;
+    const duplicadas = [];
     let primera = null;
     try {
       for (const file of files) {
@@ -5115,16 +5119,29 @@ function PestañaFacturas({ api, pin }) {
           form.append("factura", file);
           const r = await fetch(FAC_URL + "/subir", { method: "POST", headers: { "x-admin-pin": pin }, body: form });
           const data = await r.json();
+          if (r.status === 409 && data.motivo === "archivo_duplicado") {
+            dupCount++;
+            duplicadas.push({ nombre: file.name, ya: data.facturaExistente });
+            continue;
+          }
           if (!data.ok) { errCount++; continue; }
           okCount++;
           if (!primera) primera = data.factura;
         } catch { errCount++; }
       }
       await cargar();
-      // Si solo hay 1 factura subida, abrirla directamente como antes
-      if (files.length === 1 && primera) {
+      // Mensajes de resultado
+      if (dupCount > 0) {
+        const lista = duplicadas.map(d => {
+          const ref = d.ya.numero_factura ? `${d.ya.proveedor || "?"} ${d.ya.numero_factura}` : d.ya.archivoOriginal;
+          return `  • "${d.nombre}" ya existe como ${ref}`;
+        }).join("\n");
+        alert(`⚠️ ${dupCount} factura${dupCount === 1 ? "" : "s"} duplicada${dupCount === 1 ? "" : "s"} (no subida${dupCount === 1 ? "" : "s"}):\n${lista}\n\n${okCount > 0 ? `✅ ${okCount} subida${okCount === 1 ? "" : "s"} correctamente.` : ""}`);
+      }
+      // Si solo hay 1 factura subida (y no era duplicada), abrirla directamente
+      if (files.length === 1 && primera && dupCount === 0) {
         setFacturaAbierta(primera);
-      } else if (okCount > 0) {
+      } else if (okCount > 0 && dupCount === 0) {
         const msg = errCount > 0
           ? `✅ ${okCount} subidas, ${errCount} fallaron. Pulsa 'EXTRAER TODAS' para procesarlas con IA.`
           : `✅ ${okCount} facturas subidas. Pulsa 'EXTRAER TODAS' para procesarlas con IA.`;
@@ -5185,14 +5202,80 @@ function PestañaFacturas({ api, pin }) {
         </div>
       </div>
 
+      {/* Buscador y filtros */}
+      {facturas.length > 0 && (() => {
+        // Lista de proveedores únicos (de las facturas ya extraídas)
+        const provs = Array.from(new Set(
+          facturas.map(f => f.datosExtraidos?.proveedor).filter(Boolean)
+        )).sort((a, b) => a.localeCompare(b));
+        return (
+          <div className="bg-white border-2 border-stone-900 p-3 space-y-2">
+            <div className="text-[10px] tracking-widest font-bold text-stone-700">BUSCADOR</div>
+            <div className="flex gap-2 flex-wrap items-center">
+              <input
+                type="text"
+                value={busqueda}
+                onChange={(e) => setBusqueda(e.target.value)}
+                placeholder="Buscar por nombre, proveedor o nº factura…"
+                className="flex-1 min-w-[200px] border-2 border-stone-900 p-2 text-xs font-mono focus:outline-none focus:bg-amber-50" />
+              <select
+                value={filtroProveedor}
+                onChange={(e) => setFiltroProveedor(e.target.value)}
+                className="border-2 border-stone-900 p-2 text-xs font-mono bg-white focus:outline-none">
+                <option value="todos">Todos los proveedores</option>
+                {provs.map(p => <option key={p} value={p}>{p}</option>)}
+              </select>
+              <select
+                value={filtroEstado}
+                onChange={(e) => setFiltroEstado(e.target.value)}
+                className="border-2 border-stone-900 p-2 text-xs font-mono bg-white focus:outline-none">
+                <option value="todos">Todos los estados</option>
+                <option value="pendiente_extraccion">Sin extraer</option>
+                <option value="pendiente_revision">Pendiente revisión</option>
+                <option value="completado">Completado</option>
+                <option value="error">Error</option>
+              </select>
+              {(busqueda || filtroProveedor !== "todos" || filtroEstado !== "todos") && (
+                <button
+                  onClick={() => { setBusqueda(""); setFiltroProveedor("todos"); setFiltroEstado("todos"); }}
+                  className="px-3 py-2 text-[10px] font-bold border-2 border-stone-900 bg-stone-100 hover:bg-stone-200">
+                  ✕ LIMPIAR
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Lista de facturas */}
       <div className="bg-white border-2 border-stone-900">
+        {(() => {
+          // Aplicar filtros
+          const q = busqueda.toLowerCase().trim();
+          const facturasFiltradas = facturas.filter(f => {
+            if (filtroEstado !== "todos" && f.estado !== filtroEstado) return false;
+            if (filtroProveedor !== "todos" && f.datosExtraidos?.proveedor !== filtroProveedor) return false;
+            if (q) {
+              const enNombre = (f.archivoOriginal || "").toLowerCase().includes(q);
+              const enProv = (f.datosExtraidos?.proveedor || "").toLowerCase().includes(q);
+              const enNum = (f.datosExtraidos?.numero_factura || "").toLowerCase().includes(q);
+              if (!enNombre && !enProv && !enNum) return false;
+            }
+            return true;
+          });
+          const filtrandoActivo = q || filtroProveedor !== "todos" || filtroEstado !== "todos";
+          return (
+            <>
         <div className="bg-stone-900 text-amber-400 p-2 text-[10px] font-bold tracking-widest flex items-center justify-between gap-2 flex-wrap">
-          <span>FACTURAS IMPORTADAS ({facturas.length})</span>
+          <span>
+            {filtrandoActivo
+              ? `MOSTRANDO ${facturasFiltradas.length} de ${facturas.length}`
+              : `FACTURAS IMPORTADAS (${facturas.length})`}
+          </span>
           {(() => {
-            // Impacto agregado de todas las facturas
+            // Impacto agregado de las facturas filtradas
             let totalSube = 0, totalBaja = 0, nFactImpacto = 0, totalFacturado = 0;
-            facturas.forEach(f => {
+            facturasFiltradas.forEach(f => {
               let subF = 0, bajF = 0;
               (f.lineasRevision || []).forEach(l => {
                 if (!l.variacionPrecio) return;
@@ -5236,9 +5319,11 @@ function PestañaFacturas({ api, pin }) {
           <div className="p-8 text-center text-stone-500 text-sm">Cargando...</div>
         ) : facturas.length === 0 ? (
           <div className="p-8 text-center text-stone-500 text-sm">No hay facturas importadas aún</div>
+        ) : facturasFiltradas.length === 0 ? (
+          <div className="p-8 text-center text-stone-500 text-sm">No hay facturas que coincidan con los filtros aplicados</div>
         ) : (
           <div className="divide-y divide-stone-200">
-            {facturas.map(f => {
+            {facturasFiltradas.map(f => {
               // Calcular impacto económico de la factura (solo líneas con variación, ignorando "ignorado")
               let impactoSube = 0, impactoBaja = 0, nSube = 0, nBaja = 0;
               (f.lineasRevision || []).forEach(l => {
@@ -5328,6 +5413,9 @@ function PestañaFacturas({ api, pin }) {
             })}
           </div>
         )}
+            </>
+          );
+        })()}
       </div>
 
       {facturaAbierta && (
