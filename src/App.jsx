@@ -3737,17 +3737,53 @@ function PestañaProductos({ data, api, reload }) {
     const umbral = umbrales[umbralDuplicados] || 0.8;
     const pares = [];
     const lista = data.productos || [];
+
+    // Helper: ¿comparten al menos un proveedor?
+    const compartenProveedor = (a, b) => {
+      const provsA = Object.keys(a.proveedores || {});
+      const provsB = Object.keys(b.proveedores || {});
+      return provsA.some(p => provsB.includes(p));
+    };
+
+    // Helper: ¿tienen la misma ref para el mismo proveedor? (duplicado seguro al 100%)
+    const compartenRef = (a, b) => {
+      const provsA = Object.entries(a.proveedores || {});
+      for (const [pid, pvA] of provsA) {
+        const pvB = b.proveedores?.[pid];
+        if (pvB && pvA.ref && pvB.ref && pvA.ref === pvB.ref) return pid;
+      }
+      return null;
+    };
+
     for (let i = 0; i < lista.length; i++) {
       for (let j = i + 1; j < lista.length; j++) {
-        const score = calcularSimilitud(lista[i].desc, lista[j].desc);
+        const a = lista[i], b = lista[j];
+
+        // Filtrar pares descartados manualmente
+        if (paresDescartados.has(claveDescartado(a.id, b.id))) continue;
+
+        // CASO 1: Misma ref + mismo proveedor = duplicado seguro al 100% (sin importar desc)
+        const provCompartido = compartenRef(a, b);
+        if (provCompartido) {
+          pares.push({
+            a, b,
+            score: 1.0,
+            motivo: `misma ref "${a.proveedores[provCompartido].ref}" en ${provCompartido}`
+          });
+          continue;
+        }
+
+        // CASO 2: Descripciones similares Y comparten algún proveedor
+        // (sin proveedor compartido NO son duplicados — pueden ser productos distintos cubiertos por proveedores distintos)
+        if (!compartenProveedor(a, b)) continue;
+
+        const score = calcularSimilitud(a.desc, b.desc);
         if (score >= umbral) {
-          // Filtrar pares descartados manualmente
-          if (paresDescartados.has(claveDescartado(lista[i].id, lista[j].id))) continue;
-          pares.push({ a: lista[i], b: lista[j], score });
+          pares.push({ a, b, score, motivo: "descripciones similares" });
         }
       }
     }
-    return pares.sort((x, y) => y.score - x.score); // mayor score primero
+    return pares.sort((x, y) => y.score - x.score);
   }, [data.productos, verDuplicados, umbralDuplicados, paresDescartados]);
 
   // Set de IDs implicados (para resaltar filas)
@@ -4063,19 +4099,25 @@ function PestañaProductos({ data, api, reload }) {
 
               // ── MODO DUPLICADOS: render por pares con cabecera ──
               if (verDuplicados && paresDuplicados.length > 0) {
-                return paresDuplicados.slice(0, 50).flatMap(({ a, b, score }, idx) => {
+                return paresDuplicados.slice(0, 50).flatMap(({ a, b, score, motivo }, idx) => {
                   const pctScore = Math.round(score * 100);
-                  const colorScore = pctScore >= 90 ? "bg-red-700" : pctScore >= 75 ? "bg-orange-600" : "bg-amber-600";
+                  // Si comparten ref, es duplicado seguro: badge negro destacado
+                  const esRefIdentica = motivo && motivo.startsWith("misma ref");
+                  const colorScore = esRefIdentica ? "bg-stone-900" : pctScore >= 90 ? "bg-red-700" : pctScore >= 75 ? "bg-orange-600" : "bg-amber-600";
+                  const labelScore = esRefIdentica ? "DUPLICADO SEGURO" : `${pctScore}% similar`;
                   const claveK = a.id + "__" + b.id;
                   return [
                     // Cabecera del par
                     <tr key={claveK + "-h"} className="bg-rose-100 border-t-4 border-rose-700">
                       <td colSpan={7} className="p-1.5">
-                        <div className="flex items-center gap-2 text-[10px]">
-                          <span className={`${colorScore} text-white font-bold px-1.5 py-0.5 rounded-sm`}>
-                            {pctScore}% similar
+                        <div className="flex items-center gap-2 text-[10px] flex-wrap">
+                          <span className={`${colorScore} text-white font-bold px-1.5 py-0.5 rounded-sm whitespace-nowrap`}>
+                            {labelScore}
                           </span>
-                          <span className="font-bold text-rose-900 tracking-widest">PAR #{idx + 1} — POSIBLE DUPLICADO</span>
+                          <span className="font-bold text-rose-900 tracking-widest">PAR #{idx + 1}</span>
+                          {motivo && (
+                            <span className="text-rose-800 italic">— {motivo}</span>
+                          )}
                           <button onClick={() => handleDescartarPar(a.id, b.id)}
                             title="Marcar este par como NO duplicado para que no vuelva a aparecer"
                             className="ml-auto text-[9px] font-bold bg-white text-stone-700 px-2 py-1 border border-stone-400 hover:bg-stone-100">
