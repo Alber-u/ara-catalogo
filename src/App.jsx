@@ -2890,22 +2890,64 @@ function CatalogoApp({ usuario, onLogout }) {
           </div>
         </div>
 
-        {/* Grid productos */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-          {productos.map(p => (
-            <CardProducto
-              key={p.id}
-              producto={p}
-              cantidades={Object.fromEntries(PROVEEDORES.map(pv => [pv.id, getCant(p.id, pv.id)]))}
-              cantidadesM={Object.fromEntries(PROVEEDORES.map(pv => [pv.id, getCantM(p.id, pv.id)]))}
-              addProv={(provId) => addProv(p.id, provId)}
-              removeProv={(provId) => removeProv(p.id, provId)}
-              setExacta={(provId, n) => setExacta(p.id, provId, n)}
-              setExactaM={(provId, n) => setExactaM(p.id, provId, n)}
-              onClick={() => setProductoSel(p)}
-            />
-          ))}
-        </div>
+        {/* Productos agrupados por TIPO de pieza (codo, machón, te...). 
+            Las cabeceras solo aparecen cuando hay 2+ productos del mismo tipo
+            para evitar ruido visual con tipos que solo tienen 1 unidad. 
+            En móvil las cabeceras son sticky para orientar al operario al hacer scroll. */}
+        {(() => {
+          // Agrupar productos por tipo manteniendo el orden ya calculado
+          const grupos = [];
+          let actual = null;
+          for (const p of productos) {
+            const tipo = detectarTipoPieza(p.desc);
+            if (actual && actual.tipo === tipo) {
+              actual.items.push(p);
+            } else {
+              actual = { tipo, items: [p] };
+              grupos.push(actual);
+            }
+          }
+          // Etiquetas más legibles para los tipos
+          const etiquetaTipo = {
+            fitting: "FITTINGS", valvula: "VÁLVULAS", machon: "MACHONES",
+            manguito: "MANGUITOS", racor: "RACORES", filtro: "FILTROS",
+            tuberia: "TUBERÍAS", reduccion: "REDUCCIONES", tapon: "TAPONES",
+            enlace: "ENLACES", tuerca: "TUERCAS", junta: "JUNTAS",
+            soporte: "SOPORTES", abrazadera: "ABRAZADERAS",
+            bateria: "BATERÍAS", grifo: "GRIFOS", lija: "LIJAS",
+            tornillo: "TORNILLERÍA", espuma: "ESPUMAS", sellador: "SELLADORES",
+            cinta: "CINTAS", brida: "BRIDAS", tenaza: "TENAZAS",
+            hilo: "HILOS / SELLADORES", conex: "CONEXIONES",
+            codo: "CODOS", te: "TES",
+          };
+          return grupos.map((g, gi) => (
+            <div key={"grupo-" + gi} className="mb-4">
+              {g.items.length >= 2 && (
+                <div className="sticky top-[72px] sm:top-[64px] z-10 bg-stone-100/95 backdrop-blur-sm py-1.5 px-3 mb-2 -mx-1 border-l-4 border-stone-900">
+                  <div className="font-mono text-[11px] tracking-widest font-black text-stone-900">
+                    {etiquetaTipo[g.tipo] || g.tipo.toUpperCase().replace("ZZZ_", "")}
+                    <span className="ml-2 text-stone-500 font-normal">· {g.items.length}</span>
+                  </div>
+                </div>
+              )}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                {g.items.map(p => (
+                  <CardProducto
+                    key={p.id}
+                    producto={p}
+                    cantidades={Object.fromEntries(PROVEEDORES.map(pv => [pv.id, getCant(p.id, pv.id)]))}
+                    cantidadesM={Object.fromEntries(PROVEEDORES.map(pv => [pv.id, getCantM(p.id, pv.id)]))}
+                    addProv={(provId) => addProv(p.id, provId)}
+                    removeProv={(provId) => removeProv(p.id, provId)}
+                    setExacta={(provId, n) => setExacta(p.id, provId, n)}
+                    setExactaM={(provId, n) => setExactaM(p.id, provId, n)}
+                    onClick={() => setProductoSel(p)}
+                  />
+                ))}
+              </div>
+            </div>
+          ));
+        })()}
 
         {productos.length === 0 && (
           <div className="text-center py-12 text-stone-500 font-mono text-sm">
