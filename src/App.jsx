@@ -6817,42 +6817,62 @@ function ModalCrearProductoDesdeAnalisis({ producto, pin, onCerrar, onCreado }) 
   }, []);
 
   // Inicializar familia: la más probable según la descripción
-  // Sugiere palabras clave y busca la familia del catálogo que mejor encaje
+  // Estrategia: scoring por palabras clave que aparecen TANTO en la descripción facturada
+  // como en el nombre de la familia. La familia que más palabras comparta gana.
+  // Esto evita el problema de "REDUCCION PVC" matcheando con "Accesorios Latón"
+  // solo porque "reduccion" pegó con "accesorio" antes que "pvc" con "pvc".
   useEffect(() => {
     if (!descripcion || familias.length === 0) return;
     const desc = descripcion.toLowerCase();
 
-    // Patrones: claves que sugieren familias
-    const patrones = [
-      { kw: ["codo", "te ", "manguito", "reduccion", "reducción", "tapón", "tapon", "racor", "fitting"], fam: "accesorio" },
-      { kw: ["válvula", "valvula", "filtro", "grifo", "esfera"], fam: "valvula" },
-      { kw: ["tubería", "tuberia", "tubo "], fam: "tuberia" },
-      { kw: ["aislamiento", "coquilla"], fam: "aislamiento" },
-      { kw: ["contador", "batería", "bateria"], fam: "contador" },
-      { kw: ["latón", "laton"], fam: "laton" },
-      { kw: ["cobre"], fam: "cobre" },
-      { kw: ["pvc"], fam: "pvc" },
-      { kw: ["latiguillo", "flexible"], fam: "latiguillo" },
-      { kw: ["abrazadera", "anclaje"], fam: "abrazadera" },
-    ];
+    // Sinónimos: si la descripción tiene la clave, considera estas palabras como presentes
+    const sinonimos = {
+      "laton": ["latón"],
+      "latón": ["laton"],
+      "tuberia": ["tubería", "tubo"],
+      "tubería": ["tuberia", "tubo"],
+      "valvula": ["válvula", "grifo", "esfera"],
+      "válvula": ["valvula", "grifo", "esfera"],
+      "evac": ["evacuación", "evacuacion"],
+      "evacuacion": ["evac", "evacuación"],
+      "evacuación": ["evac", "evacuacion"],
+    };
 
-    // Encuentra la palabra clave que mejor matchea la descripción
-    let famMatch = null;
-    for (const { kw, fam } of patrones) {
-      if (kw.some(k => desc.includes(k))) {
-        // Busca en las familias del catálogo una que contenga esa palabra
-        const candidata = familias.find(f => f.toLowerCase().includes(fam));
-        if (candidata) { famMatch = candidata; break; }
+    // Tokenizamos la descripción facturada (palabras significativas, mínimo 3 letras)
+    const tokensDesc = new Set();
+    desc.split(/[\s\-\/\.,;:]+/).filter(t => t.length >= 3).forEach(t => {
+      tokensDesc.add(t);
+      // añadir sinónimos
+      if (sinonimos[t]) sinonimos[t].forEach(s => tokensDesc.add(s));
+    });
+
+    // Para cada familia del catálogo, contar cuántos tokens coinciden con la descripción.
+    // PRIORIDAD: materiales (pvc, laton, cobre, multicapa, pe) valen el doble — son más distintivos.
+    const materiales = ["pvc", "latón", "laton", "cobre", "multicapa", "galvanizado", "evacuación", "evacuacion"];
+    const familiaScores = familias.map(f => {
+      const fLower = f.toLowerCase();
+      const tokensFam = fLower.split(/[\s\-\/\.,;:]+/).filter(t => t.length >= 3);
+      let score = 0;
+      for (const tk of tokensFam) {
+        if (tokensDesc.has(tk)) {
+          score += materiales.includes(tk) ? 2 : 1;
+        }
       }
+      return { familia: f, score };
+    });
+
+    // Ordenar por score descendente y tomar la mejor (si hay alguna con score > 0)
+    familiaScores.sort((a, b) => b.score - a.score);
+    let famMatch = null;
+    if (familiaScores[0]?.score > 0) {
+      famMatch = familiaScores[0].familia;
+    } else {
+      // Fallback: ningún token coincide → poner la familia "Varios" si existe, o la primera
+      famMatch = familias.find(f => f.toLowerCase().includes("vario")) || familias[0];
     }
 
-    // Para casos con múltiples patrones (ej. "codo latón"), priorizar la más específica
-    // Ya está cubierto porque iteramos en orden y el primero que encaja gana, así que
-    // ponemos los más específicos arriba en el array
-    if (!famMatch) famMatch = familias[0];
-
     setFamilia(famMatch);
-    setFiltroFamilia(famMatch); // también para el buscador de asociar
+    setFiltroFamilia(famMatch);
   }, [familias.length]);
 
   // Helper para mostrar nombre de proveedor (no solo el id)
