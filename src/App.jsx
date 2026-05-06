@@ -1475,6 +1475,49 @@ const detectarTipoPieza = (texto) => {
   return "zzz_" + (primera || "otro");
 };
 
+// Devuelve el tipo de SVG que debería usarse para un producto.
+// Usa el campo `img` del producto si existe; si no, deriva uno automáticamente del tipo de pieza
+// detectado en la descripción + pistas de material (multicapa, cobre, PVC, PE...).
+// Esto permite que productos creados sin asignar `img` tengan un SVG decente automáticamente.
+const imgTypeFromProducto = (p) => {
+  if (p?.img) return p.img;
+  const desc = (p?.desc || "").toLowerCase();
+  const fam = (p?.familia || "").toLowerCase();
+  const tipo = detectarTipoPieza(p?.desc || "");
+
+  // Pistas de material en la descripción / familia
+  const esPVC = /pvc|evac/i.test(desc) || fam.includes("pvc");
+  const esElectro = /electrofu|electro|pe100/i.test(desc) || fam.includes("electrofusi");
+  const esCobre = /cobre|cu\b/i.test(desc) || fam.includes("cobre");
+  const esMcap = /multicapa|pex|al\/pe/i.test(desc) || fam.includes("multicapa");
+
+  // Casos especiales por tipo (con material)
+  if (tipo === "tuberia" || tipo === "tubo") {
+    if (esElectro) return "tubo-pe";
+    if (esPVC) return "tubo-pvc";
+    if (esCobre) return "cobre";
+    if (esMcap) return "tubo-pex";
+    return "tubo-pvc";
+  }
+  if (tipo === "te")    return esPVC ? "te-pvc" : "te";
+  if (tipo === "codo")  return esPVC ? "codo-pvc" : esElectro ? "electro" : "codo";
+  if (tipo === "reduccion") return esPVC ? "reduc-pvc" : "reduccion";
+
+  // Tipos directos (mismo nombre que el case del switch)
+  const tiposDirectos = ["valvula","fitting","machon","tapon","filtro","bateria",
+    "latiguillo","aislamiento","abrazadera","lija","espuma","sellador","cinta",
+    "tornillo","tenaza","soporte","manguito","racor","grifo","junta","brida","hilo"];
+  if (tiposDirectos.includes(tipo)) return tipo;
+
+  // Fallback por familia si el tipo no se reconoció
+  if (fam.includes("aislamiento")) return "aislamiento";
+  if (fam.includes("fijaci") || fam.includes("soporte")) return "abrazadera";
+  if (fam.includes("v\u00e1lvulas") || fam.includes("valvulas")) return "valvula";
+  if (fam.includes("fittings") || fam.includes("racorer")) return "fitting";
+
+  return "default";
+};
+
 // Compara dos productos por: familia → tipo de pieza → unidad (mm primero, pulgadas después) → valor numérico → desc
 const compararPorTamaño = (a, b) => {
   // 1. Familia alfabética
@@ -1533,194 +1576,558 @@ const ProductSVG = ({ type }) => {
   const id = useId();
   const w = 200, h = 200;
   const baseProps = { width: "100%", height: "100%", viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: "xMidYMid meet" };
+
+  // Definiciones reutilizables para todos los SVGs (degradados, sombras, patrones de rosca)
+  const Defs = () => (
+    <defs>
+      {/* Latón con brillo */}
+      <linearGradient id={`${id}-laton`} x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stopColor="#fef3c7" />
+        <stop offset="35%" stopColor="#fcd34d" />
+        <stop offset="65%" stopColor="#d97706" />
+        <stop offset="100%" stopColor="#78350f" />
+      </linearGradient>
+      <linearGradient id={`${id}-laton-h`} x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0%" stopColor="#92400e" />
+        <stop offset="50%" stopColor="#fbbf24" />
+        <stop offset="100%" stopColor="#92400e" />
+      </linearGradient>
+      {/* Cobre */}
+      <linearGradient id={`${id}-cobre`} x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stopColor="#fed7aa" />
+        <stop offset="40%" stopColor="#fb923c" />
+        <stop offset="100%" stopColor="#7c2d12" />
+      </linearGradient>
+      {/* PVC blanco */}
+      <linearGradient id={`${id}-pvc`} x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stopColor="#ffffff" />
+        <stop offset="50%" stopColor="#e5e7eb" />
+        <stop offset="100%" stopColor="#9ca3af" />
+      </linearGradient>
+      {/* PE/PEX naranja */}
+      <linearGradient id={`${id}-pex`} x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stopColor="#fed7aa" />
+        <stop offset="50%" stopColor="#fb923c" />
+        <stop offset="100%" stopColor="#9a3412" />
+      </linearGradient>
+      {/* Metálico (para abrazaderas, latiguillos) */}
+      <linearGradient id={`${id}-metal`} x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stopColor="#f3f4f6" />
+        <stop offset="50%" stopColor="#9ca3af" />
+        <stop offset="100%" stopColor="#374151" />
+      </linearGradient>
+      {/* Patrón de rosca */}
+      <pattern id={`${id}-rosca`} x="0" y="0" width="6" height="40" patternUnits="userSpaceOnUse">
+        <line x1="0" y1="0" x2="0" y2="40" stroke="#451a03" strokeWidth="0.8" opacity="0.6" />
+        <line x1="3" y1="0" x2="3" y2="40" stroke="#fef3c7" strokeWidth="0.4" opacity="0.5" />
+      </pattern>
+      {/* Sombra suave */}
+      <filter id={`${id}-shadow`} x="-10%" y="-10%" width="120%" height="120%">
+        <feGaussianBlur in="SourceAlpha" stdDeviation="2" />
+        <feOffset dx="2" dy="3" result="offsetblur" />
+        <feComponentTransfer><feFuncA type="linear" slope="0.3" /></feComponentTransfer>
+        <feMerge><feMergeNode /><feMergeNode in="SourceGraphic" /></feMerge>
+      </filter>
+    </defs>
+  );
+
   switch (type) {
     case "valvula":
       return (
         <svg {...baseProps}>
-          <defs>
-            <linearGradient id={`${id}-laton`} x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stopColor="#fde68a" /><stop offset="50%" stopColor="#d97706" /><stop offset="100%" stopColor="#92400e" />
-            </linearGradient>
-          </defs>
-          <rect x="20" y="80" width="160" height="40" fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="2" />
-          <rect x="80" y="40" width="40" height="50" fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="2" />
-          <rect x="60" y="30" width="80" height="14" fill="#dc2626" stroke="#451a03" strokeWidth="2" />
-          <circle cx="100" cy="100" r="16" fill="#451a03" />
+          <Defs />
+          {/* Cuerpo principal */}
+          <rect x="20" y="80" width="160" height="40" fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="1.5" rx="2" />
+          {/* Roscas en los extremos */}
+          <rect x="20" y="80" width="20" height="40" fill={`url(#${id}-rosca)`} opacity="0.6" />
+          <rect x="160" y="80" width="20" height="40" fill={`url(#${id}-rosca)`} opacity="0.6" />
+          {/* Cuello del vástago */}
+          <rect x="80" y="40" width="40" height="50" fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="1.5" />
+          {/* Maneta roja */}
+          <rect x="40" y="22" width="120" height="14" fill="#dc2626" stroke="#7f1d1d" strokeWidth="1.5" rx="2" />
+          <rect x="40" y="22" width="120" height="4" fill="#fca5a5" opacity="0.7" />
+          {/* Eje central */}
+          <circle cx="100" cy="29" r="5" fill="#451a03" />
+          {/* Brillo central */}
+          <ellipse cx="100" cy="92" rx="70" ry="3" fill="#fef3c7" opacity="0.4" />
         </svg>
       );
     case "fitting": case "fitting-pe":
       return (
         <svg {...baseProps}>
-          <defs>
-            <linearGradient id={`${id}-fit`} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#fde68a" /><stop offset="100%" stopColor="#92400e" />
-            </linearGradient>
-          </defs>
-          <rect x="30" y="70" width="140" height="60" fill={`url(#${id}-fit)`} stroke="#451a03" strokeWidth="2" />
-          <rect x="20" y="80" width="20" height="40" fill="#451a03" />
-          <rect x="160" y="80" width="20" height="40" fill="#451a03" />
+          <Defs />
+          <rect x="30" y="70" width="140" height="60" fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="1.5" rx="3" />
+          <rect x="20" y="80" width="20" height="40" fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="1.5" />
+          <rect x="160" y="80" width="20" height="40" fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="1.5" />
+          <rect x="20" y="80" width="20" height="40" fill={`url(#${id}-rosca)`} opacity="0.6" />
+          <rect x="160" y="80" width="20" height="40" fill={`url(#${id}-rosca)`} opacity="0.6" />
+          {/* Hexágono central (zona de llave) */}
+          <polygon points="65,75 85,65 115,65 135,75 135,125 115,135 85,135 65,125" fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="1.5" />
+          <ellipse cx="100" cy="80" rx="35" ry="2" fill="#fef3c7" opacity="0.4" />
         </svg>
       );
     case "te":
       return (
         <svg {...baseProps}>
-          <rect x="20" y="80" width="160" height="40" fill="#d97706" stroke="#451a03" strokeWidth="2" />
-          <rect x="80" y="20" width="40" height="80" fill="#d97706" stroke="#451a03" strokeWidth="2" />
+          <Defs />
+          <rect x="20" y="85" width="160" height="30" fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="1.5" rx="2" />
+          <rect x="85" y="20" width="30" height="80" fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="1.5" rx="2" />
+          {/* Roscas en los 3 extremos */}
+          <rect x="20" y="85" width="22" height="30" fill={`url(#${id}-rosca)`} opacity="0.55" />
+          <rect x="158" y="85" width="22" height="30" fill={`url(#${id}-rosca)`} opacity="0.55" />
+          <rect x="85" y="20" width="30" height="22" fill={`url(#${id}-rosca)`} opacity="0.55" />
+          {/* Brillo */}
+          <rect x="20" y="89" width="160" height="2" fill="#fef3c7" opacity="0.5" />
+          <rect x="89" y="20" width="2" height="80" fill="#fef3c7" opacity="0.5" />
         </svg>
       );
     case "codo":
       return (
         <svg {...baseProps}>
-          <path d="M 20 100 L 100 100 Q 120 100 120 80 L 120 20" stroke="#d97706" strokeWidth="40" fill="none" strokeLinecap="square" />
-          <path d="M 20 100 L 100 100 Q 120 100 120 80 L 120 20" stroke="#451a03" strokeWidth="2" fill="none" />
+          <Defs />
+          {/* Tubo principal del codo (relleno con degradado) */}
+          <path d="M 20 85 L 105 85 Q 115 85 115 95 L 115 180 L 145 180 L 145 95 Q 145 65 115 65 L 20 65 Z"
+                fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="1.5" />
+          {/* Roscas en los extremos */}
+          <rect x="20" y="65" width="20" height="20" fill={`url(#${id}-rosca)`} opacity="0.55" />
+          <rect x="115" y="160" width="30" height="20" fill={`url(#${id}-rosca)`} opacity="0.55" />
+          {/* Brillo curva interior */}
+          <path d="M 25 70 L 105 70 Q 110 70 110 75" stroke="#fef3c7" strokeWidth="2" fill="none" opacity="0.6" />
         </svg>
       );
     case "machon":
       return (
         <svg {...baseProps}>
-          <rect x="20" y="80" width="160" height="40" fill="#d97706" stroke="#451a03" strokeWidth="2" />
-          <pattern id={`${id}-rosca`} x="0" y="0" width="6" height="40" patternUnits="userSpaceOnUse">
-            <line x1="0" y1="0" x2="0" y2="40" stroke="#451a03" strokeWidth="1" />
-          </pattern>
-          <rect x="20" y="80" width="160" height="40" fill={`url(#${id}-rosca)`} opacity="0.4" />
+          <Defs />
+          <rect x="20" y="80" width="160" height="40" fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="1.5" rx="2" />
+          <rect x="20" y="80" width="160" height="40" fill={`url(#${id}-rosca)`} opacity="0.6" />
+          {/* Hexágono central (zona de llave) */}
+          <polygon points="80,75 95,68 105,68 120,75 120,125 105,132 95,132 80,125" fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="1.5" />
+          <ellipse cx="100" cy="86" rx="60" ry="2" fill="#fef3c7" opacity="0.5" />
         </svg>
       );
     case "tapon":
       return (
         <svg {...baseProps}>
-          <rect x="60" y="50" width="80" height="100" fill="#d97706" stroke="#451a03" strokeWidth="2" />
-          <rect x="50" y="60" width="100" height="20" fill="#92400e" stroke="#451a03" strokeWidth="2" />
+          <Defs />
+          {/* Cuerpo del tapón (cilindro corto) */}
+          <rect x="55" y="60" width="90" height="100" fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="1.5" rx="3" />
+          {/* Borde superior tipo brida */}
+          <rect x="45" y="55" width="110" height="20" fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="1.5" rx="2" />
+          {/* Hexágono superior (zona llave) */}
+          <polygon points="65,55 90,45 110,45 135,55 135,75 110,85 90,85 65,75" fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="1.5" />
+          {/* Roscas inferiores */}
+          <rect x="55" y="100" width="90" height="60" fill={`url(#${id}-rosca)`} opacity="0.55" />
+          <ellipse cx="100" cy="60" rx="30" ry="3" fill="#fef3c7" opacity="0.5" />
         </svg>
       );
     case "reduccion":
       return (
         <svg {...baseProps}>
-          <polygon points="20,70 90,70 110,90 110,110 90,130 20,130" fill="#d97706" stroke="#451a03" strokeWidth="2" />
-          <rect x="110" y="85" width="70" height="30" fill="#d97706" stroke="#451a03" strokeWidth="2" />
+          <Defs />
+          {/* Forma de embudo */}
+          <polygon points="20,70 90,70 130,90 130,110 90,130 20,130"
+                   fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="1.5" />
+          <rect x="130" y="85" width="50" height="30" fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="1.5" />
+          {/* Roscas extremos */}
+          <rect x="20" y="70" width="22" height="60" fill={`url(#${id}-rosca)`} opacity="0.55" />
+          <rect x="158" y="85" width="22" height="30" fill={`url(#${id}-rosca)`} opacity="0.55" />
         </svg>
       );
     case "filtro":
       return (
         <svg {...baseProps}>
-          <rect x="20" y="80" width="50" height="40" fill="#d97706" stroke="#451a03" strokeWidth="2" />
-          <rect x="130" y="80" width="50" height="40" fill="#d97706" stroke="#451a03" strokeWidth="2" />
-          <polygon points="70,80 130,80 130,120 70,120 90,140 90,60" fill="#fbbf24" stroke="#451a03" strokeWidth="2" />
-          <rect x="85" y="40" width="30" height="20" fill="#451a03" />
+          <Defs />
+          {/* Cuerpo lateral horizontal */}
+          <rect x="20" y="80" width="50" height="40" fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="1.5" rx="2" />
+          <rect x="130" y="80" width="50" height="40" fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="1.5" rx="2" />
+          {/* Cuerpo central inclinado */}
+          <polygon points="70,80 130,80 130,120 70,120 90,150 90,55 110,55 110,150" fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="1.5" />
+          {/* Cabezal arriba */}
+          <rect x="80" y="35" width="40" height="22" fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="1.5" rx="2" />
+          <polygon points="75,30 125,30 125,40 75,40" fill="#451a03" />
+          {/* Roscas */}
+          <rect x="20" y="80" width="22" height="40" fill={`url(#${id}-rosca)`} opacity="0.55" />
+          <rect x="158" y="80" width="22" height="40" fill={`url(#${id}-rosca)`} opacity="0.55" />
         </svg>
       );
     case "tubo-pex":
       return (
         <svg {...baseProps}>
-          <ellipse cx="100" cy="100" rx="70" ry="60" fill="none" stroke="#fb923c" strokeWidth="14" />
-          <ellipse cx="100" cy="100" rx="70" ry="60" fill="none" stroke="#fdba74" strokeWidth="2" />
+          <Defs />
+          {/* Rollo enrollado */}
+          <ellipse cx="100" cy="100" rx="70" ry="60" fill="none" stroke={`url(#${id}-pex)`} strokeWidth="22" />
+          <ellipse cx="100" cy="100" rx="70" ry="60" fill="none" stroke="#7c2d12" strokeWidth="1.5" />
+          <ellipse cx="100" cy="100" rx="50" ry="42" fill="none" stroke={`url(#${id}-pex)`} strokeWidth="14" />
+          <ellipse cx="100" cy="100" rx="50" ry="42" fill="none" stroke="#7c2d12" strokeWidth="1" />
+          <ellipse cx="100" cy="100" rx="30" ry="24" fill="none" stroke="#9a3412" strokeWidth="2" />
         </svg>
       );
     case "tubo-pe":
       return (
         <svg {...baseProps}>
-          <rect x="20" y="80" width="160" height="40" fill="#1e293b" stroke="#000" strokeWidth="2" />
+          <Defs />
+          <rect x="20" y="80" width="160" height="40" fill="#1e293b" stroke="#000" strokeWidth="1.5" rx="3" />
           <rect x="20" y="92" width="160" height="14" fill="#3b82f6" />
+          <rect x="20" y="93" width="160" height="2" fill="#93c5fd" opacity="0.5" />
           <text x="100" y="103" textAnchor="middle" fill="#fff" fontSize="7" fontWeight="bold" fontFamily="monospace">PE100 AENOR</text>
+          {/* Brillos en los extremos */}
+          <ellipse cx="20" cy="100" rx="3" ry="20" fill="#475569" />
+          <ellipse cx="180" cy="100" rx="3" ry="20" fill="#475569" />
         </svg>
       );
     case "tubo-pvc":
       return (
         <svg {...baseProps}>
-          <rect x="20" y="60" width="160" height="80" rx="3" fill="#f3f4f6" stroke="#374151" strokeWidth="2" />
+          <Defs />
+          <rect x="20" y="60" width="160" height="80" rx="4" fill={`url(#${id}-pvc)`} stroke="#374151" strokeWidth="1.5" />
+          {/* Aros de unión */}
+          <rect x="20" y="60" width="6" height="80" fill="#9ca3af" stroke="#374151" strokeWidth="1" />
+          <rect x="174" y="60" width="6" height="80" fill="#9ca3af" stroke="#374151" strokeWidth="1" />
           <text x="100" y="105" textAnchor="middle" fill="#374151" fontSize="11" fontWeight="bold" fontFamily="monospace">PVC AENOR</text>
         </svg>
       );
     case "te-pvc":
       return (
         <svg {...baseProps}>
-          <rect x="20" y="80" width="160" height="40" fill="#f3f4f6" stroke="#374151" strokeWidth="2" />
-          <rect x="80" y="20" width="40" height="80" fill="#f3f4f6" stroke="#374151" strokeWidth="2" />
+          <Defs />
+          <rect x="20" y="85" width="160" height="30" fill={`url(#${id}-pvc)`} stroke="#374151" strokeWidth="1.5" rx="2" />
+          <rect x="85" y="20" width="30" height="80" fill={`url(#${id}-pvc)`} stroke="#374151" strokeWidth="1.5" rx="2" />
+          {/* Bocas de unión más anchas */}
+          <rect x="15" y="80" width="12" height="40" fill={`url(#${id}-pvc)`} stroke="#374151" strokeWidth="1.5" />
+          <rect x="173" y="80" width="12" height="40" fill={`url(#${id}-pvc)`} stroke="#374151" strokeWidth="1.5" />
+          <rect x="80" y="15" width="40" height="12" fill={`url(#${id}-pvc)`} stroke="#374151" strokeWidth="1.5" />
         </svg>
       );
     case "codo-pvc":
       return (
         <svg {...baseProps}>
-          <path d="M 20 100 L 100 100 Q 120 100 120 80 L 120 20" stroke="#f3f4f6" strokeWidth="40" fill="none" strokeLinecap="square" />
-          <path d="M 20 100 L 100 100 Q 120 100 120 80 L 120 20" stroke="#374151" strokeWidth="2" fill="none" />
+          <Defs />
+          <path d="M 20 85 L 105 85 Q 115 85 115 95 L 115 180 L 145 180 L 145 95 Q 145 65 115 65 L 20 65 Z"
+                fill={`url(#${id}-pvc)`} stroke="#374151" strokeWidth="1.5" />
+          {/* Bocas de unión */}
+          <rect x="15" y="60" width="10" height="30" fill={`url(#${id}-pvc)`} stroke="#374151" strokeWidth="1.5" />
+          <rect x="110" y="170" width="40" height="14" fill={`url(#${id}-pvc)`} stroke="#374151" strokeWidth="1.5" />
         </svg>
       );
     case "reduc-pvc":
       return (
         <svg {...baseProps}>
-          <polygon points="20,60 90,60 130,90 130,110 90,140 20,140" fill="#f3f4f6" stroke="#374151" strokeWidth="2" />
-          <rect x="130" y="85" width="50" height="30" fill="#f3f4f6" stroke="#374151" strokeWidth="2" />
+          <Defs />
+          <polygon points="20,60 90,60 130,90 130,110 90,140 20,140" fill={`url(#${id}-pvc)`} stroke="#374151" strokeWidth="1.5" />
+          <rect x="130" y="85" width="50" height="30" fill={`url(#${id}-pvc)`} stroke="#374151" strokeWidth="1.5" />
+          {/* Aros de unión */}
+          <rect x="14" y="60" width="10" height="80" fill="#9ca3af" stroke="#374151" strokeWidth="1" />
+          <rect x="170" y="85" width="10" height="30" fill="#9ca3af" stroke="#374151" strokeWidth="1" />
         </svg>
       );
     case "electro":
       return (
         <svg {...baseProps}>
-          <rect x="50" y="60" width="100" height="80" fill="#1e293b" stroke="#000" strokeWidth="2" />
-          <circle cx="80" cy="100" r="6" fill="#f97316" />
-          <circle cx="120" cy="100" r="6" fill="#f97316" />
-          <rect x="55" y="120" width="90" height="3" fill="#fbbf24" />
+          <Defs />
+          {/* Cuerpo negro de electrofusión */}
+          <rect x="40" y="55" width="120" height="90" fill="#1e293b" stroke="#000" strokeWidth="1.5" rx="4" />
+          <rect x="40" y="55" width="120" height="3" fill="#475569" />
+          {/* Bocas de unión a los lados */}
+          <rect x="20" y="80" width="22" height="40" fill="#1e293b" stroke="#000" strokeWidth="1.5" />
+          <rect x="158" y="80" width="22" height="40" fill="#1e293b" stroke="#000" strokeWidth="1.5" />
+          {/* Terminales naranjas (electrodos) */}
+          <circle cx="75" cy="100" r="7" fill="#f97316" stroke="#7c2d12" strokeWidth="1" />
+          <circle cx="125" cy="100" r="7" fill="#f97316" stroke="#7c2d12" strokeWidth="1" />
+          {/* Etiqueta */}
+          <rect x="55" y="120" width="90" height="18" fill="#fbbf24" stroke="#92400e" strokeWidth="0.8" rx="2" />
+          <text x="100" y="133" textAnchor="middle" fill="#451a03" fontSize="9" fontWeight="bold" fontFamily="monospace">PE100</text>
         </svg>
       );
     case "cobre":
       return (
         <svg {...baseProps}>
-          <rect x="20" y="85" width="160" height="30" fill="#fb923c" stroke="#7c2d12" strokeWidth="2" />
-          <rect x="20" y="92" width="160" height="2" fill="#fdba74" />
-          <text x="100" y="105" textAnchor="middle" fill="#7c2d12" fontSize="7" fontWeight="bold" fontFamily="monospace">CU</text>
+          <Defs />
+          <rect x="20" y="82" width="160" height="36" fill={`url(#${id}-cobre)`} stroke="#7c2d12" strokeWidth="1.5" rx="3" />
+          <rect x="20" y="86" width="160" height="2" fill="#fed7aa" opacity="0.7" />
+          <rect x="20" y="113" width="160" height="2" fill="#7c2d12" opacity="0.5" />
+          {/* Aros de los extremos */}
+          <ellipse cx="20" cy="100" rx="3" ry="18" fill="#7c2d12" />
+          <ellipse cx="180" cy="100" rx="3" ry="18" fill="#7c2d12" />
+          <text x="100" y="103" textAnchor="middle" fill="#7c2d12" fontSize="9" fontWeight="bold" fontFamily="monospace">Cu</text>
         </svg>
       );
     case "mcap":
       return (
         <svg {...baseProps}>
-          <rect x="20" y="80" width="160" height="40" fill="#fb923c" stroke="#7c2d12" strokeWidth="2" rx="2" />
-          <rect x="20" y="86" width="160" height="2" fill="#fbbf24" />
-          <rect x="20" y="112" width="160" height="2" fill="#fbbf24" />
+          <Defs />
+          <rect x="20" y="80" width="160" height="40" fill={`url(#${id}-pex)`} stroke="#7c2d12" strokeWidth="1.5" rx="3" />
+          {/* Capa interior aluminio */}
+          <rect x="20" y="92" width="160" height="2" fill="#d1d5db" />
+          <rect x="20" y="106" width="160" height="2" fill="#d1d5db" />
+          <rect x="20" y="98" width="160" height="4" fill="#9ca3af" />
+          {/* Brillo */}
+          <rect x="20" y="84" width="160" height="2" fill="#fed7aa" opacity="0.7" />
+          {/* Aros de los extremos */}
+          <ellipse cx="20" cy="100" rx="3" ry="20" fill="#7c2d12" />
+          <ellipse cx="180" cy="100" rx="3" ry="20" fill="#7c2d12" />
         </svg>
       );
     case "bateria":
       return (
         <svg {...baseProps}>
-          <rect x="40" y="40" width="120" height="120" fill="#475569" stroke="#0f172a" strokeWidth="2" />
+          <Defs />
+          <rect x="35" y="35" width="130" height="130" fill="#475569" stroke="#0f172a" strokeWidth="1.5" rx="3" />
+          <rect x="35" y="35" width="130" height="6" fill="#64748b" />
+          {/* 4 columnas con conexiones */}
           {[0,1,2,3].map(i => (
             <g key={i}>
-              <circle cx={60 + i*30} cy="80" r="8" fill="#fbbf24" stroke="#0f172a" strokeWidth="1" />
-              <circle cx={60 + i*30} cy="120" r="8" fill="#fbbf24" stroke="#0f172a" strokeWidth="1" />
+              <rect x={51 + i*30} y="55" width="18" height="90" fill="#334155" stroke="#0f172a" strokeWidth="0.8" rx="1" />
+              <circle cx={60 + i*30} cy="75" r="7" fill={`url(#${id}-laton)`} stroke="#0f172a" strokeWidth="1" />
+              <circle cx={60 + i*30} cy="125" r="7" fill={`url(#${id}-laton)`} stroke="#0f172a" strokeWidth="1" />
             </g>
           ))}
+          <text x="100" y="155" textAnchor="middle" fill="#fbbf24" fontSize="8" fontWeight="bold" fontFamily="monospace">BAT</text>
         </svg>
       );
     case "latiguillo":
       return (
         <svg {...baseProps}>
-          <pattern id={`${id}-trenza`} x="0" y="0" width="8" height="40" patternUnits="userSpaceOnUse">
-            <rect width="8" height="40" fill="#9ca3af" />
-            <line x1="0" y1="0" x2="8" y2="40" stroke="#6b7280" strokeWidth="1" />
-            <line x1="8" y1="0" x2="0" y2="40" stroke="#6b7280" strokeWidth="1" />
+          <Defs />
+          <pattern id={`${id}-trenza`} x="0" y="0" width="10" height="40" patternUnits="userSpaceOnUse">
+            <rect width="10" height="40" fill="#9ca3af" />
+            <line x1="0" y1="0" x2="10" y2="40" stroke="#374151" strokeWidth="1.2" />
+            <line x1="10" y1="0" x2="0" y2="40" stroke="#6b7280" strokeWidth="1" />
           </pattern>
-          <path d="M 30 60 Q 100 30 170 60 Q 100 130 30 160" stroke={`url(#${id}-trenza)`} strokeWidth="20" fill="none" />
-          <circle cx="30" cy="60" r="14" fill="#fbbf24" stroke="#451a03" strokeWidth="2" />
-          <circle cx="170" cy="60" r="14" fill="#fbbf24" stroke="#451a03" strokeWidth="2" />
+          <path d="M 30 60 Q 100 30 170 60 Q 100 130 30 160" stroke={`url(#${id}-trenza)`} strokeWidth="22" fill="none" strokeLinecap="round" />
+          <circle cx="30" cy="60" r="16" fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="1.5" />
+          <circle cx="170" cy="60" r="16" fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="1.5" />
+          {/* Tuercas hexagonales */}
+          <polygon points="20,55 30,48 40,48 50,55 50,65 40,72 30,72 20,65" fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="1" />
+          <polygon points="160,55 170,48 180,48 190,55 190,65 180,72 170,72 160,65" fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="1" />
         </svg>
       );
     case "aislamiento":
       return (
         <svg {...baseProps}>
-          <ellipse cx="100" cy="100" rx="70" ry="50" fill="#1f2937" stroke="#000" strokeWidth="2" />
-          <ellipse cx="100" cy="100" rx="50" ry="35" fill="#fb923c" />
-          <text x="100" y="105" textAnchor="middle" fill="#fff" fontSize="9" fontWeight="bold" fontFamily="monospace">AISL</text>
+          <Defs />
+          {/* Cilindro coquilla negra */}
+          <rect x="20" y="65" width="160" height="70" fill="#1f2937" stroke="#000" strokeWidth="1.5" rx="6" />
+          {/* Hueco interior */}
+          <rect x="30" y="80" width="140" height="40" fill="#fb923c" stroke="#7c2d12" strokeWidth="1" rx="3" />
+          {/* Líneas indicativas */}
+          <line x1="30" y1="100" x2="170" y2="100" stroke="#fed7aa" strokeWidth="1.5" opacity="0.6" />
+          <text x="100" y="155" textAnchor="middle" fill="#374151" fontSize="9" fontWeight="bold" fontFamily="monospace">AISLAMIENTO</text>
         </svg>
       );
     case "abrazadera":
       return (
         <svg {...baseProps}>
-          <circle cx="100" cy="100" r="50" fill="none" stroke="#374151" strokeWidth="14" />
-          <circle cx="100" cy="100" r="50" fill="none" stroke="#9ca3af" strokeWidth="2" />
-          <rect x="80" y="40" width="40" height="20" fill="#374151" />
+          <Defs />
+          {/* Anillo metálico */}
+          <circle cx="100" cy="105" r="55" fill="none" stroke={`url(#${id}-metal)`} strokeWidth="14" />
+          <circle cx="100" cy="105" r="55" fill="none" stroke="#1f2937" strokeWidth="1.5" />
+          <circle cx="100" cy="105" r="48" fill="none" stroke="#9ca3af" strokeWidth="1" opacity="0.6" />
+          {/* Tornillo de cierre */}
+          <rect x="78" y="35" width="44" height="28" fill="#374151" stroke="#0f172a" strokeWidth="1.2" rx="2" />
+          <rect x="92" y="20" width="16" height="20" fill="#1f2937" stroke="#000" strokeWidth="1" />
+          <rect x="92" y="22" width="16" height="2" fill="#9ca3af" />
+        </svg>
+      );
+    /* === NUEVOS SVGs para tipos detectados automáticamente === */
+    case "lija":
+      return (
+        <svg {...baseProps}>
+          <Defs />
+          <rect x="30" y="50" width="140" height="100" fill="#dc2626" stroke="#7f1d1d" strokeWidth="1.5" rx="3" />
+          <rect x="35" y="55" width="130" height="90" fill="#991b1b" />
+          {/* Granos */}
+          {[...Array(60)].map((_, i) => {
+            const cx = 40 + (i * 13) % 120;
+            const cy = 60 + Math.floor((i * 13) / 120) * 12;
+            return <circle key={i} cx={cx} cy={cy} r="1.2" fill="#fbbf24" />;
+          })}
+          <rect x="30" y="155" width="140" height="14" fill="#fef3c7" stroke="#92400e" strokeWidth="1" />
+          <text x="100" y="166" textAnchor="middle" fill="#451a03" fontSize="9" fontWeight="bold" fontFamily="monospace">LIJA</text>
+        </svg>
+      );
+    case "espuma":
+      return (
+        <svg {...baseProps}>
+          <Defs />
+          {/* Bote de espuma */}
+          <rect x="65" y="40" width="70" height="130" fill="#fbbf24" stroke="#92400e" strokeWidth="1.5" rx="6" />
+          <rect x="65" y="40" width="70" height="20" fill="#dc2626" rx="6" />
+          {/* Boquilla blanca */}
+          <rect x="85" y="20" width="30" height="22" fill="#e5e7eb" stroke="#374151" strokeWidth="1" rx="2" />
+          {/* Etiqueta */}
+          <rect x="70" y="80" width="60" height="50" fill="#fef3c7" stroke="#92400e" strokeWidth="0.8" />
+          <text x="100" y="100" textAnchor="middle" fill="#451a03" fontSize="9" fontWeight="bold" fontFamily="monospace">PU</text>
+          <text x="100" y="115" textAnchor="middle" fill="#451a03" fontSize="6" fontFamily="monospace">FOAM</text>
+        </svg>
+      );
+    case "sellador":
+      return (
+        <svg {...baseProps}>
+          <Defs />
+          {/* Tubo de sellador (cartucho) */}
+          <rect x="50" y="40" width="100" height="140" fill="#dc2626" stroke="#7f1d1d" strokeWidth="1.5" rx="4" />
+          <rect x="50" y="40" width="100" height="8" fill="#fbbf24" />
+          {/* Boquilla cónica */}
+          <polygon points="85,40 115,40 110,15 90,15" fill="#fbbf24" stroke="#92400e" strokeWidth="1" />
+          {/* Etiqueta */}
+          <rect x="55" y="80" width="90" height="60" fill="#fef3c7" stroke="#7f1d1d" strokeWidth="0.8" />
+          <text x="100" y="105" textAnchor="middle" fill="#7f1d1d" fontSize="11" fontWeight="bold" fontFamily="monospace">SELL</text>
+          <text x="100" y="125" textAnchor="middle" fill="#7f1d1d" fontSize="7" fontFamily="monospace">300ml</text>
+        </svg>
+      );
+    case "cinta":
+      return (
+        <svg {...baseProps}>
+          <Defs />
+          {/* Rollo de cinta circular */}
+          <circle cx="100" cy="100" r="70" fill="#3b82f6" stroke="#1e3a8a" strokeWidth="1.5" />
+          <circle cx="100" cy="100" r="50" fill="#dbeafe" stroke="#1e3a8a" strokeWidth="1" />
+          <circle cx="100" cy="100" r="25" fill="#fff" stroke="#1e3a8a" strokeWidth="1" />
+          {/* Líneas radiales */}
+          {[0, 60, 120, 180, 240, 300].map(deg => (
+            <line key={deg} x1="100" y1="100" x2={100 + 70 * Math.cos(deg * Math.PI / 180)} y2={100 + 70 * Math.sin(deg * Math.PI / 180)} stroke="#1e3a8a" strokeWidth="0.6" opacity="0.4" />
+          ))}
+        </svg>
+      );
+    case "tornillo":
+      return (
+        <svg {...baseProps}>
+          <Defs />
+          {/* Cabeza */}
+          <circle cx="100" cy="50" r="22" fill={`url(#${id}-metal)`} stroke="#1f2937" strokeWidth="1.5" />
+          <line x1="78" y1="50" x2="122" y2="50" stroke="#1f2937" strokeWidth="3" />
+          {/* Cuerpo del tornillo con rosca */}
+          <rect x="92" y="65" width="16" height="100" fill={`url(#${id}-metal)`} stroke="#1f2937" strokeWidth="1.5" />
+          {[0,1,2,3,4,5,6,7,8,9].map(i => (
+            <line key={i} x1="92" y1={75 + i * 9} x2="108" y2={70 + i * 9} stroke="#1f2937" strokeWidth="0.8" />
+          ))}
+          {/* Punta */}
+          <polygon points="92,165 108,165 100,180" fill={`url(#${id}-metal)`} stroke="#1f2937" strokeWidth="1.5" />
+        </svg>
+      );
+    case "tenaza":
+      return (
+        <svg {...baseProps}>
+          <Defs />
+          {/* Mangos */}
+          <path d="M 50 180 L 90 100 L 110 100 L 150 180" stroke={`url(#${id}-metal)`} strokeWidth="14" fill="none" strokeLinecap="round" />
+          <path d="M 50 180 L 90 100 L 110 100 L 150 180" stroke="#1f2937" strokeWidth="1.5" fill="none" strokeLinecap="round" />
+          {/* Empuñaduras rojas */}
+          <rect x="40" y="155" width="22" height="35" fill="#dc2626" stroke="#7f1d1d" strokeWidth="1" rx="3" />
+          <rect x="138" y="155" width="22" height="35" fill="#dc2626" stroke="#7f1d1d" strokeWidth="1" rx="3" />
+          {/* Cabezas de la tenaza */}
+          <path d="M 75 90 L 100 30 L 125 90 L 110 100 L 90 100 Z" fill={`url(#${id}-metal)`} stroke="#1f2937" strokeWidth="1.5" />
+          {/* Pivote central */}
+          <circle cx="100" cy="100" r="6" fill="#1f2937" />
+        </svg>
+      );
+    case "soporte":
+      return (
+        <svg {...baseProps}>
+          <Defs />
+          {/* Pieza en L */}
+          <rect x="40" y="40" width="20" height="120" fill={`url(#${id}-metal)`} stroke="#1f2937" strokeWidth="1.5" />
+          <rect x="40" y="140" width="120" height="20" fill={`url(#${id}-metal)`} stroke="#1f2937" strokeWidth="1.5" />
+          {/* Agujeros */}
+          <circle cx="50" cy="60" r="4" fill="#0f172a" />
+          <circle cx="50" cy="100" r="4" fill="#0f172a" />
+          <circle cx="80" cy="150" r="4" fill="#0f172a" />
+          <circle cx="120" cy="150" r="4" fill="#0f172a" />
+          <circle cx="150" cy="150" r="4" fill="#0f172a" />
+        </svg>
+      );
+    case "manguito":
+      return (
+        <svg {...baseProps}>
+          <Defs />
+          <rect x="35" y="80" width="130" height="40" fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="1.5" rx="3" />
+          {/* Aros laterales */}
+          <rect x="30" y="75" width="14" height="50" fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="1.5" rx="2" />
+          <rect x="156" y="75" width="14" height="50" fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="1.5" rx="2" />
+          {/* Roscas */}
+          <rect x="35" y="80" width="22" height="40" fill={`url(#${id}-rosca)`} opacity="0.55" />
+          <rect x="143" y="80" width="22" height="40" fill={`url(#${id}-rosca)`} opacity="0.55" />
+          <rect x="35" y="86" width="130" height="2" fill="#fef3c7" opacity="0.5" />
+        </svg>
+      );
+    case "racor":
+      return (
+        <svg {...baseProps}>
+          <Defs />
+          <rect x="40" y="80" width="120" height="40" fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="1.5" rx="2" />
+          {/* Hexágono central */}
+          <polygon points="75,75 95,65 105,65 125,75 125,125 105,135 95,135 75,125" fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="1.5" />
+          {/* Tuerca tipo unión */}
+          <polygon points="155,70 175,60 195,70 195,130 175,140 155,130" fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="1.5" />
+          {/* Boca de racor */}
+          <rect x="20" y="85" width="22" height="30" fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="1.5" />
+          <rect x="20" y="85" width="22" height="30" fill={`url(#${id}-rosca)`} opacity="0.55" />
+        </svg>
+      );
+    case "grifo":
+      return (
+        <svg {...baseProps}>
+          <Defs />
+          {/* Cuerpo del grifo */}
+          <rect x="80" y="80" width="40" height="80" fill={`url(#${id}-laton)`} stroke="#451a03" strokeWidth="1.5" rx="3" />
+          {/* Caño curvo */}
+          <path d="M 100 80 Q 100 50 130 50 L 150 50 L 150 80" stroke={`url(#${id}-laton)`} strokeWidth="14" fill="none" strokeLinecap="round" />
+          <path d="M 100 80 Q 100 50 130 50 L 150 50 L 150 80" stroke="#451a03" strokeWidth="1.5" fill="none" />
+          {/* Mando superior */}
+          <rect x="60" y="35" width="80" height="14" fill="#dc2626" stroke="#7f1d1d" strokeWidth="1" rx="3" />
+          <circle cx="100" cy="42" r="5" fill="#451a03" />
+          {/* Salida del agua */}
+          <ellipse cx="150" cy="80" rx="12" ry="3" fill="#0f172a" />
+          {/* Brillos */}
+          <rect x="84" y="85" width="32" height="3" fill="#fef3c7" opacity="0.6" />
+        </svg>
+      );
+    case "junta":
+      return (
+        <svg {...baseProps}>
+          <Defs />
+          {/* Anillo de junta */}
+          <circle cx="100" cy="100" r="60" fill="#000" stroke="#1f2937" strokeWidth="1.5" />
+          <circle cx="100" cy="100" r="35" fill="#fff" stroke="#1f2937" strokeWidth="1.5" />
+          <circle cx="100" cy="100" r="50" fill="none" stroke="#374151" strokeWidth="0.8" opacity="0.6" />
+        </svg>
+      );
+    case "brida":
+      return (
+        <svg {...baseProps}>
+          <Defs />
+          <circle cx="100" cy="100" r="65" fill={`url(#${id}-metal)`} stroke="#1f2937" strokeWidth="1.5" />
+          <circle cx="100" cy="100" r="22" fill="#0f172a" />
+          {/* Agujeros de tornillos */}
+          {[0, 60, 120, 180, 240, 300].map(deg => {
+            const x = 100 + 45 * Math.cos(deg * Math.PI / 180);
+            const y = 100 + 45 * Math.sin(deg * Math.PI / 180);
+            return <circle key={deg} cx={x} cy={y} r="6" fill="#0f172a" />;
+          })}
+        </svg>
+      );
+    case "hilo":
+      return (
+        <svg {...baseProps}>
+          <Defs />
+          {/* Carrete de hilo */}
+          <rect x="55" y="55" width="90" height="90" fill="#fef3c7" stroke="#92400e" strokeWidth="1.5" rx="4" />
+          <rect x="40" y="55" width="120" height="14" fill={`url(#${id}-laton)`} stroke="#92400e" strokeWidth="1.5" />
+          <rect x="40" y="131" width="120" height="14" fill={`url(#${id}-laton)`} stroke="#92400e" strokeWidth="1.5" />
+          {/* Hilo blanco arrollado */}
+          {[0,1,2,3,4,5,6,7,8].map(i => (
+            <line key={i} x1="60" y1={73 + i * 7} x2="140" y2={73 + i * 7} stroke="#fff" strokeWidth="1.5" />
+          ))}
+          <text x="100" y="103" textAnchor="middle" fill="#451a03" fontSize="8" fontWeight="bold" fontFamily="monospace">SELL</text>
         </svg>
       );
     default:
       return (
         <svg {...baseProps}>
-          <rect x="50" y="50" width="100" height="100" fill="#9ca3af" stroke="#374151" strokeWidth="2" />
+          <Defs />
+          <rect x="40" y="40" width="120" height="120" fill={`url(#${id}-metal)`} stroke="#374151" strokeWidth="1.5" rx="4" />
+          <text x="100" y="108" textAnchor="middle" fill="#374151" fontSize="14" fontWeight="bold" fontFamily="monospace">PIEZA</text>
         </svg>
       );
   }
@@ -2003,7 +2410,7 @@ function CardProducto({ producto, cantidades, cantidadesM, addProv, removeProv, 
     <div className="bg-white border-2 border-stone-900 hover:shadow-[6px_6px_0_0_rgba(0,0,0,1)] transition-all">
       <button onClick={onClick} className="block w-full text-left">
         <div className="border-b-2 border-stone-900 bg-stone-50 aspect-square overflow-hidden">
-          <ProductSVG type={producto.img} />
+          <ProductSVG type={imgTypeFromProducto(producto)} />
         </div>
         <div className="px-3 pt-3 pb-2">
           <div className="font-mono text-[9px] text-stone-500 tracking-widest mb-1">{producto.familia.toUpperCase()}</div>
@@ -3030,7 +3437,7 @@ function CatalogoApp({ usuario, onLogout }) {
                         {lineasCarrito.filter(l => l.prov === "aqua").map(l => (
                           <div key={l.id + l.prov} className="p-3 flex gap-3">
                             <div className="w-14 h-14 border-2 border-stone-900 bg-stone-50 shrink-0">
-                              <ProductSVG type={l.producto.img} />
+                              <ProductSVG type={imgTypeFromProducto(l.producto)} />
                             </div>
                             <div className="flex-1 min-w-0">
                               <div className="text-[9px] font-mono text-stone-500">{l.proveedor.ref}</div>
@@ -3081,7 +3488,7 @@ function CatalogoApp({ usuario, onLogout }) {
                         {lineasCarrito.filter(l => l.prov === "aram").map(l => (
                           <div key={l.id + l.prov} className="p-3 flex gap-3">
                             <div className="w-14 h-14 border-2 border-stone-900 bg-stone-50 shrink-0">
-                              <ProductSVG type={l.producto.img} />
+                              <ProductSVG type={imgTypeFromProducto(l.producto)} />
                             </div>
                             <div className="flex-1 min-w-0">
                               <div className="text-[9px] font-mono text-stone-500">{l.proveedor.ref}</div>
@@ -3217,7 +3624,7 @@ function CatalogoApp({ usuario, onLogout }) {
               <X className="w-4 h-4" />
             </button>
             <div className="aspect-square bg-stone-50 border-b-2 border-stone-900">
-              <ProductSVG type={productoSel.img} />
+              <ProductSVG type={imgTypeFromProducto(productoSel)} />
             </div>
             <div className="p-5">
               <div className="font-mono text-[10px] tracking-widest text-stone-500 mb-1">
