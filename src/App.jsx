@@ -1861,7 +1861,7 @@ function CardProducto({ producto, cantidades, cantidadesM, addProv, removeProv, 
         </div>
         <div className="px-3 pt-3 pb-2">
           <div className="font-mono text-[9px] text-stone-500 tracking-widest mb-1">{producto.familia.toUpperCase()}</div>
-          <div className="font-bold text-sm text-stone-900 leading-tight min-h-[2.5em]">{producto.desc}</div>
+          <div className="font-bold text-sm text-stone-900 leading-tight min-h-[2.5em]">{producto.nombreCorto || producto.desc}</div>
         </div>
       </button>
 
@@ -1988,6 +1988,7 @@ function CatalogoApp({ usuario, onLogout }) {
       const matchFam = familia === "Todo" || p.familia === familia;
       const matchSearch = busqueda === "" ||
         p.desc.toLowerCase().includes(busqueda.toLowerCase()) ||
+        (p.nombreCorto || "").toLowerCase().includes(busqueda.toLowerCase()) ||
         (p.proveedores.aqua?.ref || "").toLowerCase().includes(busqueda.toLowerCase()) ||
         (p.proveedores.aram?.ref || "").toLowerCase().includes(busqueda.toLowerCase());
       return matchFam && matchSearch;
@@ -3032,7 +3033,7 @@ function CatalogoApp({ usuario, onLogout }) {
                 {productoSel.familia.toUpperCase()}
               </div>
               <h3 className="font-black text-xl mb-3 leading-tight" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
-                {productoSel.desc}
+                {productoSel.nombreCorto || productoSel.desc}
               </h3>
 
               {/* Detalle por proveedor */}
@@ -3496,7 +3497,7 @@ function PanelAdmin({ pin, onSalir }) {
 
       <div className="max-w-7xl mx-auto p-4">
         {pestaña === "resumen"   && <PestañaResumen data={data} api={api} reload={recargarTodo} setPestaña={setPestaña} />}
-        {pestaña === "productos" && <PestañaProductos data={data} api={api} reload={recargarTodo} />}
+        {pestaña === "productos" && <PestañaProductos data={data} api={api} reload={recargarTodo} pin={pin} />}
         {pestaña === "obras"     && <PestañaObras data={data} api={api} reload={recargarTodo} />}
         {pestaña === "operarios" && <PestañaOperarios data={data} api={api} reload={recargarTodo} />}
         {pestaña === "proveedores" && <PestañaProveedores data={data} api={api} reload={recargarTodo} />}
@@ -3644,7 +3645,7 @@ function StatCard({ titulo, valor, sub, color }) {
 // =========================================================
 //  PESTAÑA PRODUCTOS — gestión catálogo + validar pendientes
 // =========================================================
-function PestañaProductos({ data, api, reload }) {
+function PestañaProductos({ data, api, reload, pin }) {
   const [editando, setEditando] = useState(null); // producto que se está editando
   const [añadiendo, setAñadiendo] = useState(false);
   const [busq, setBusq] = useState("");
@@ -4025,6 +4026,51 @@ function PestañaProductos({ data, api, reload }) {
           <button onClick={() => descargarPlantillaCSV()}
                   className="text-[10px] font-bold tracking-widest px-3 py-1.5 border-2 border-stone-900 bg-stone-100 hover:bg-stone-200 text-stone-900">
             📋 PLANTILLA CSV
+          </button>
+          <button onClick={async () => {
+            const totalSinNombre = (data.productos || []).filter(p => !p.nombreCorto).length;
+            const totalProductos = (data.productos || []).length;
+            const opciones = [
+              `1) Solo los ${totalSinNombre} productos SIN nombre corto`,
+              `2) Los ${totalProductos} productos (regenera todos, sobrescribe los que ya tengan)`,
+              "3) Cancelar"
+            ].join("\n");
+            const elec = prompt(`🤖 GENERAR NOMBRES CORTOS CON IA
+
+Esto crea nombres más cortos y entendibles para que tus operarios los lean rápido en obra. El nombre técnico (descripción) NO se toca.
+
+Coste aproximado: ~5-15 céntimos según volumen.
+
+Elige opción:
+${opciones}
+
+Escribe 1, 2 o 3:`, "1");
+            if (elec === "3" || !elec) return;
+            const soloVacios = elec === "1";
+            try {
+              const r = await fetch("https://araujo-bot.onrender.com/api/facturas/generar-nombres-cortos", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "X-Admin-Pin": pin },
+                body: JSON.stringify({ soloVacios })
+              });
+              if (!r.ok) {
+                const errText = await r.text();
+                throw new Error("HTTP " + r.status + ": " + errText.substring(0, 200));
+              }
+              const datos = await r.json();
+              alert(`✅ ${datos.generados} nombres cortos generados.
+
+Coste: ~${(datos.coste_aprox_eur || 0).toFixed(3)} €
+
+Ejemplos:
+${(datos.ejemplos || []).map(e => `  · ${e.nombreCorto}`).join("\n")}`);
+              if (typeof reload === "function") reload();
+            } catch (e) {
+              alert("Error: " + (e.message || e));
+            }
+          }}
+                  className="text-[10px] font-bold tracking-widest px-3 py-1.5 border-2 border-stone-900 bg-violet-200 hover:bg-violet-300 text-stone-900">
+            🤖 NOMBRES CORTOS IA
           </button>
         </div>
       </div>
