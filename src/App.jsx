@@ -1485,11 +1485,64 @@ const imgTypeFromProducto = (p) => {
   const fam = (p?.familia || "").toLowerCase();
   const tipo = detectarTipoPieza(p?.desc || "");
 
+  // === Detección de subtipos específicos ANTES del flujo genérico ===
+  // (fotos muy específicas que cubren productos concretos)
+
+  // Válvulas específicas (la palabra "valvula" es genérica, miramos el contexto)
+  if (/v\u00e1lvula|valvula|grifo|llave/i.test(desc) || tipo === "valvula") {
+    if (/compuerta/i.test(desc)) return "valvula-compuerta";
+    if (/retenci|antirret|clapeta/i.test(desc)) return "valvula-retencion";
+    if (/reductora|reduct\.\s*pres|pres\.?\s*reduc/i.test(desc)) return "valvula-reductora";
+    if (/empotr|escuadra/i.test(desc)) return "valvula-empotrar";
+    if (/lavabo|desag/i.test(desc)) return "valvula-lavabo";
+    if (/purgador|purga aire|automatic.*aire/i.test(desc)) return "purgador";
+    if (/jard\u00edn|jardin|exterior|grifo.*jard/i.test(desc)) return "grifo-jardin";
+    if (/pn\s*25/i.test(desc)) return "valvula-bola-pn25";
+  }
+
+  // Sifones y desagües
+  if (/sif\u00f3n|sifon/i.test(desc)) return "sifon";
+  if (/sumidero|imbornal/i.test(desc)) return "sumidero";
+
+  // Latiguillos específicos por longitud o tipo
+  if (tipo === "latiguillo" || /latiguillo|flex(?:ible)?/i.test(desc)) {
+    if (/ondul|inox.*ondul|metal.*flex/i.test(desc)) return "latiguillo-flex";
+    if (/lar(?:go|g\.)|\d{3,}\s*mm|\d+\s*m\b/i.test(desc)) return "latiguillo-largo";
+    return "latiguillo-corto";
+  }
+
+  // Soportación específica
+  if (tipo === "abrazadera" || /abrazader|grapa|sopor/i.test(desc)) {
+    if (/doble|duo/i.test(desc)) return "abrazadera-doble";
+    if (/varilla|m8|m10|m12/i.test(desc)) return "abrazadera-varilla";
+    if (/u\b|omega/i.test(desc)) return "abrazadera-u";
+    if (/silla|grapa/i.test(desc)) return "grapa-silla";
+    if (/perfil|carril|strut/i.test(desc)) return "perfil-c";
+    if (/goma|caucho|epdm/i.test(desc)) return "abrazadera-goma";
+    return "abrazadera";
+  }
+
+  // Aislamientos
+  if (tipo === "aislamiento" || /coquilla|aisl|armaflex/i.test(desc)) {
+    if (/abierta|ad\u00f1esiva|adhesiva|cerrada autoadhe/i.test(desc)) return "coquilla-abierta";
+    return "aislamiento";
+  }
+
+  // Consumibles
+  if (/cinta\s+aisl|cinta\s+negra/i.test(desc)) return "cinta-aislante";
+  if (/tefl\u00f3n|teflon/i.test(desc)) return "cinta-teflon";
+  if (/hilo|lino|tangit|sell.*hilo/i.test(desc)) return "hilo-lino";
+  if (/silicona|silicon\b/i.test(desc)) return "silicona";
+  if (/adhesivo.*pvc|tangit\s+pvc|pegamento.*pvc/i.test(desc)) return "adhesivo-pvc";
+
   // Pistas de material en la descripción / familia
   const esPVC = /pvc|evac/i.test(desc) || fam.includes("pvc");
-  const esElectro = /electrofu|electro|pe100/i.test(desc) || fam.includes("electrofusi");
+  const esElectro = /electrofu|electrof/i.test(desc) || fam.includes("electrofusi");
   const esCobre = /cobre|cu\b/i.test(desc) || fam.includes("cobre");
   const esMcap = /multicapa|pex|al\/pe/i.test(desc) || fam.includes("multicapa");
+  const esGalv = /galvani|galv\b/i.test(desc) || fam.includes("galvani");
+  const esPECompres = /(pe\s*100|polietilen)/i.test(desc) && /(compresi|compresion)/i.test(desc);
+  const esPEAzul = /pe\s*compresi|polietileno.*compresi|pe\s*az/i.test(desc);
 
   // Casos especiales por tipo (con material)
   if (tipo === "tuberia" || tipo === "tubo") {
@@ -1499,9 +1552,35 @@ const imgTypeFromProducto = (p) => {
     if (esMcap) return "tubo-pex";
     return "tubo-pvc";
   }
-  if (tipo === "te")    return esPVC ? "te-pvc" : "te";
-  if (tipo === "codo")  return esPVC ? "codo-pvc" : esElectro ? "electro" : "codo";
+  if (tipo === "te") {
+    if (esPVC) return "te-pvc";
+    if (esElectro) return "elec-te";
+    if (esGalv) return "galv-te";
+    if (esPECompres || esPEAzul) return "pe-te";
+    return "te";
+  }
+  if (tipo === "codo") {
+    if (esPVC) return "codo-pvc";
+    if (esElectro) return "electro";
+    if (esGalv) return "galv-codo";
+    if (esPECompres || esPEAzul) return "pe-codo";
+    return "codo";
+  }
   if (tipo === "reduccion") return esPVC ? "reduc-pvc" : "reduccion";
+  if (tipo === "manguito") {
+    if (esPVC) return "pvc-manguito";
+    if (esGalv) return "galv-manguito";
+    if (esPECompres || esPEAzul) return "pe-manguito";
+    return "manguito";
+  }
+  if (tipo === "machon") {
+    if (esGalv) return "galv-machon";
+    return "machon";
+  }
+  if (tipo === "valvula") {
+    if (esPECompres || esPEAzul) return "pe-valvula";
+    return "valvula";
+  }
 
   // Tipos directos (mismo nombre que el case del switch)
   const tiposDirectos = ["valvula","fitting","machon","tapon","filtro","bateria",
@@ -1572,7 +1651,62 @@ const FAMILIAS = [
 // =========================================================
 //  SVG productos (mismos del catálogo anterior)
 // =========================================================
+// Mapa de tipos que tienen FOTO REAL disponible en /imgs/{tipo}.png
+// Si añades nuevas fotos al directorio public/imgs, añade aquí su tipo correspondiente.
+const TIPOS_CON_FOTO = new Set([
+  // Genéricos (multicapa press / latón / PVC sanitario)
+  "codo", "te", "manguito", "machon", "reduccion",
+  "valvula", "tapon", "filtro", "racor", "tubo-pex",
+  "mcap", "codo-pvc", "te-pvc", "deriv-pvc", "tubo-pvc",
+  "electro", "cobre", "latiguillo", "aislamiento", "abrazadera",
+  "bateria",
+  // Variantes específicas por material
+  "galv-codo", "galv-te", "galv-machon", "galv-manguito",     // galvanizado
+  "pe-codo", "pe-te", "pe-manguito", "pe-collar", "pe-valvula", // PE compresión (azul)
+  "elec-te",                                                    // electrofusión te
+  "mc-macho", "mc-hembra",                                      // transiciones multicapa
+  "pvc-manguito",
+  "manguito-laton", "machon-mm-laton",                          // variantes latón roscar
+  // Válvulas específicas
+  "valvula-bola-pn25", "valvula-compuerta", "valvula-retencion",
+  "valvula-reductora", "valvula-empotrar", "valvula-lavabo",
+  "purgador", "grifo-jardin",
+  // Latiguillos específicos
+  "latiguillo-largo", "latiguillo-corto", "latiguillo-flex",
+  // Desagües
+  "sifon", "sumidero",
+  // Soportación específica
+  "abrazadera-goma", "abrazadera-varilla", "abrazadera-doble",
+  "abrazadera-u", "grapa-silla", "abrazadera-goma-varilla", "perfil-c",
+  // Aislamientos y consumibles
+  "coquilla-cerrada", "coquilla-abierta",
+  "cinta-aislante", "cinta-teflon", "cinta",
+  "hilo-lino", "hilo", "silicona", "sellador",
+  "adhesivo-pvc",
+]);
+
 const ProductSVG = ({ type }) => {
+  // Si existe foto real para este tipo, la mostramos en lugar del SVG dibujado.
+  // El SVG queda como fallback cuando no hay foto disponible o falla la carga.
+  const [imgFailed, setImgFailed] = useState(false);
+  if (type && TIPOS_CON_FOTO.has(type) && !imgFailed) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-white">
+        <img
+          src={`/imgs/${type}.png`}
+          alt={type}
+          className="max-w-full max-h-full object-contain"
+          onError={() => setImgFailed(true)}
+          loading="lazy"
+        />
+      </div>
+    );
+  }
+  return <ProductSVGDrawn type={type} />;
+};
+
+// SVG dibujados (los de toda la vida, sirven como respaldo si no hay foto)
+const ProductSVGDrawn = ({ type }) => {
   const id = useId();
   const w = 200, h = 200;
   const baseProps = {
