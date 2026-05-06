@@ -3644,15 +3644,105 @@ function PestañaProductos({ data, api, reload }) {
   const [busq, setBusq] = useState("");
   const [validando, setValidando] = useState(null); // pendiente que se valida
   const [modalImportar, setModalImportar] = useState(false);
+  // Filtros nuevos
+  const [filtroFamilia, setFiltroFamilia] = useState("");
+  const [filtroProveedor, setFiltroProveedor] = useState(""); // id del proveedor
+  const [filtroProveedorModo, setFiltroProveedorModo] = useState("con"); // "con" | "sin"
+  const [orden, setOrden] = useState("desc"); // desc | familia | precioAsc | precioDesc | recientes
+  const [verDuplicados, setVerDuplicados] = useState(false);
 
-  const productos = (data.productos || []).filter(p =>
-    busq === "" ||
-    p.desc.toLowerCase().includes(busq.toLowerCase()) ||
-    (p.proveedores?.aqua?.ref || "").toLowerCase().includes(busq.toLowerCase()) ||
-    (p.proveedores?.aram?.ref || "").toLowerCase().includes(busq.toLowerCase())
-  );
+  // Lista de proveedores (para el selector)
+  const proveedoresLista = data.proveedores || [];
+
+  // Familias únicas extraídas del catálogo
+  const familiasUnicas = useMemo(() => {
+    const set = new Set();
+    (data.productos || []).forEach(p => { if (p.familia) set.add(p.familia); });
+    return Array.from(set).sort();
+  }, [data.productos]);
+
+  // Helper: dos descripciones se consideran "muy similares" si comparten ≥3 palabras significativas
+  const sonDuplicados = (a, b) => {
+    if (!a || !b) return false;
+    const tokens = (s) => new Set(s.toLowerCase().replace(/[^\w\s\d]/g, " ").split(/\s+/).filter(t => t.length >= 3));
+    const tA = tokens(a), tB = tokens(b);
+    let comunes = 0;
+    for (const t of tA) if (tB.has(t)) comunes++;
+    // Considera duplicado si comparten ≥3 tokens Y las descripciones tienen <60% de diferencia
+    return comunes >= 3 && Math.abs(tA.size - tB.size) <= 2;
+  };
+
+  // Marcar productos sospechosos de ser duplicados
+  const productosConDuplicados = useMemo(() => {
+    if (!verDuplicados) return new Set();
+    const sospechosos = new Set();
+    const lista = data.productos || [];
+    for (let i = 0; i < lista.length; i++) {
+      for (let j = i + 1; j < lista.length; j++) {
+        if (sonDuplicados(lista[i].desc, lista[j].desc)) {
+          sospechosos.add(lista[i].id);
+          sospechosos.add(lista[j].id);
+        }
+      }
+    }
+    return sospechosos;
+  }, [data.productos, verDuplicados]);
+
+  // Aplicar filtros
+  const productos = useMemo(() => {
+    let lista = data.productos || [];
+
+    // Filtro búsqueda libre
+    if (busq.trim()) {
+      const q = busq.toLowerCase();
+      lista = lista.filter(p =>
+        p.desc?.toLowerCase().includes(q) ||
+        Object.values(p.proveedores || {}).some(pv => pv.ref?.toLowerCase().includes(q))
+      );
+    }
+
+    // Filtro por familia
+    if (filtroFamilia) {
+      lista = lista.filter(p => p.familia === filtroFamilia);
+    }
+
+    // Filtro por proveedor (con / sin)
+    if (filtroProveedor) {
+      lista = lista.filter(p => {
+        const tieneProv = !!(p.proveedores && p.proveedores[filtroProveedor]);
+        return filtroProveedorModo === "con" ? tieneProv : !tieneProv;
+      });
+    }
+
+    // Filtro de duplicados
+    if (verDuplicados) {
+      lista = lista.filter(p => productosConDuplicados.has(p.id));
+    }
+
+    // Ordenación
+    const sorted = [...lista];
+    if (orden === "desc") sorted.sort((a, b) => (a.desc || "").localeCompare(b.desc || ""));
+    else if (orden === "familia") sorted.sort((a, b) => (a.familia || "").localeCompare(b.familia || "") || (a.desc || "").localeCompare(b.desc || ""));
+    else if (orden === "precioAsc" || orden === "precioDesc") {
+      const precioMin = (p) => {
+        const precios = Object.values(p.proveedores || {})
+          .map(pv => (pv.bruto || 0) * (1 - (pv.dto || 0) / 100))
+          .filter(x => x > 0);
+        return precios.length > 0 ? Math.min(...precios) : 999999;
+      };
+      sorted.sort((a, b) => orden === "precioAsc" ? precioMin(a) - precioMin(b) : precioMin(b) - precioMin(a));
+    } else if (orden === "recientes") {
+      // Asumimos que los más recientes son los últimos en el array (los IDs nuevos llevan timestamp aleatorio pero el orden de inserción se preserva)
+      sorted.reverse();
+    }
+
+    return sorted;
+  }, [data.productos, busq, filtroFamilia, filtroProveedor, filtroProveedorModo, verDuplicados, productosConDuplicados, orden]);
 
   const pendientes = (data.productosPendientes || []).filter(p => p.estado === "pendiente");
+
+  // ¿Hay algún filtro activo? (para mostrar el botón "limpiar filtros")
+  const hayFiltrosActivos = busq || filtroFamilia || filtroProveedor || verDuplicados || orden !== "desc";
 
   const handleBorrar = async (id) => {
     if (!confirm("¿Borrar este producto del catálogo? No afecta a pedidos ya hechos.")) return;
@@ -3711,6 +3801,69 @@ function PestañaProductos({ data, api, reload }) {
             + NUEVO
           </button>
         </div>
+
+        {/* Filtros */}
+        <div className="bg-stone-50 border-2 border-stone-900 p-2 flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1.5">
+            <label className="text-[9px] font-bold tracking-widest text-stone-700">FAMILIA:</label>
+            <select
+              value={filtroFamilia}
+              onChange={(e) => setFiltroFamilia(e.target.value)}
+              className="border border-stone-900 px-2 py-1 text-[11px] bg-white focus:outline-none focus:bg-amber-50">
+              <option value="">Todas ({familiasUnicas.length})</option>
+              {familiasUnicas.map(f => <option key={f} value={f}>{f}</option>)}
+            </select>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <label className="text-[9px] font-bold tracking-widest text-stone-700">PROVEEDOR:</label>
+            <select
+              value={filtroProveedorModo}
+              onChange={(e) => setFiltroProveedorModo(e.target.value)}
+              disabled={!filtroProveedor}
+              className="border border-stone-900 px-2 py-1 text-[11px] bg-white focus:outline-none focus:bg-amber-50 disabled:opacity-40">
+              <option value="con">Con</option>
+              <option value="sin">Sin</option>
+            </select>
+            <select
+              value={filtroProveedor}
+              onChange={(e) => setFiltroProveedor(e.target.value)}
+              className="border border-stone-900 px-2 py-1 text-[11px] bg-white focus:outline-none focus:bg-amber-50">
+              <option value="">— elige proveedor —</option>
+              {proveedoresLista.map(p => <option key={p.id} value={p.id}>{p.nombre || p.id}</option>)}
+            </select>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <label className="text-[9px] font-bold tracking-widest text-stone-700">ORDEN:</label>
+            <select
+              value={orden}
+              onChange={(e) => setOrden(e.target.value)}
+              className="border border-stone-900 px-2 py-1 text-[11px] bg-white focus:outline-none focus:bg-amber-50">
+              <option value="desc">Descripción A-Z</option>
+              <option value="familia">Por familia</option>
+              <option value="precioAsc">Precio: barato → caro</option>
+              <option value="precioDesc">Precio: caro → barato</option>
+              <option value="recientes">Recién creados primero</option>
+            </select>
+          </div>
+
+          <button
+            onClick={() => setVerDuplicados(!verDuplicados)}
+            title="Encuentra productos con descripciones muy similares (potenciales duplicados a fusionar)"
+            className={`px-2 py-1 text-[10px] font-bold border ${verDuplicados ? "bg-rose-700 text-white border-rose-900" : "bg-rose-50 text-rose-800 border-rose-400 hover:bg-rose-100"}`}>
+            {verDuplicados ? "🔍 Solo duplicados" : "🔍 Buscar duplicados"}
+          </button>
+
+          {hayFiltrosActivos && (
+            <button
+              onClick={() => { setBusq(""); setFiltroFamilia(""); setFiltroProveedor(""); setFiltroProveedorModo("con"); setVerDuplicados(false); setOrden("desc"); }}
+              className="px-2 py-1 text-[10px] font-bold border-2 border-stone-900 bg-stone-100 hover:bg-stone-200 ml-auto">
+              ✕ LIMPIAR FILTROS
+            </button>
+          )}
+        </div>
+
         <div className="flex gap-2 flex-wrap">
           <button onClick={() => setModalImportar(true)}
                   className="text-[10px] font-bold tracking-widest px-3 py-1.5 border-2 border-stone-900 bg-emerald-100 hover:bg-emerald-200 text-stone-900">
@@ -3733,6 +3886,7 @@ function PestañaProductos({ data, api, reload }) {
 
       <div className="text-[10px] text-stone-500 tracking-widest">
         {productos.length} de {data.productos.length} productos
+        {verDuplicados && productosConDuplicados.size > 0 && ` · ⚠️ ${productosConDuplicados.size} sospechosos de duplicado`}
       </div>
 
       {/* Tabla productos */}
@@ -3755,10 +3909,33 @@ function PestañaProductos({ data, api, reload }) {
               const ar = p.proveedores?.aram;
               const netoA = aq ? +(aq.bruto * (1 - aq.dto / 100)).toFixed(2) : null;
               const netoR = ar ? +(ar.bruto * (1 - ar.dto / 100)).toFixed(2) : null;
+              const esDuplicado = verDuplicados && productosConDuplicados.has(p.id);
+              // Otros proveedores (que no son aqua ni aram) para mostrar como chips
+              const otrosProvs = Object.entries(p.proveedores || {}).filter(([k]) => k !== "aqua" && k !== "aram");
               return (
-                <tr key={p.id} className="hover:bg-amber-50">
-                  <td className="p-2 text-[10px] text-stone-500">{p.familia}</td>
-                  <td className="p-2 font-bold">{p.desc}</td>
+                <tr key={p.id} className={`hover:bg-amber-50 ${esDuplicado ? "bg-rose-50" : ""}`}>
+                  <td className="p-2 text-[10px] text-stone-500">
+                    {p.familia}
+                    {esDuplicado && <span className="ml-1 text-rose-700" title="Posible duplicado">⚠</span>}
+                  </td>
+                  <td className="p-2 font-bold">
+                    {p.desc}
+                    {otrosProvs.length > 0 && (
+                      <span className="ml-2 inline-flex gap-1 align-middle">
+                        {otrosProvs.map(([pid, pv]) => {
+                          const provNombre = proveedoresLista.find(x => x.id === pid)?.nombre || pid;
+                          const precio = pv.bruto ? +(pv.bruto * (1 - (pv.dto || 0) / 100)).toFixed(2) : null;
+                          return (
+                            <span key={pid}
+                              title={`${provNombre} · ref ${pv.ref || "—"}${precio !== null ? " · €" + precio : ""}`}
+                              className="text-[9px] font-bold px-1 py-0.5 bg-violet-100 text-violet-800 border border-violet-300 rounded-sm font-mono">
+                              {pid.toUpperCase().substring(0, 4)}
+                            </span>
+                          );
+                        })}
+                      </span>
+                    )}
+                  </td>
                   <td className="p-2 font-mono text-[10px]">{aq?.ref || "—"}</td>
                   <td className="p-2 text-right font-mono">{netoA ? "€" + netoA : "—"}</td>
                   <td className="p-2 font-mono text-[10px]">{ar?.ref || "—"}</td>
