@@ -6806,6 +6806,7 @@ function ModalCrearProductoDesdeAnalisis({ producto, pin, onCerrar, onCreado }) 
   const [modo, setModo] = useState("crear"); // "crear" | "asociar"
   const [busquedaProd, setBusquedaProd] = useState("");
   const [productoExistente, setProductoExistente] = useState(null);
+  const [filtroFamilia, setFiltroFamilia] = useState(""); // familia seleccionada para filtrar candidatos
   const FAC_URL = "https://araujo-bot.onrender.com/api/facturas";
 
   // Familias únicas del catálogo + opción "(Nueva familia)"
@@ -6816,29 +6817,103 @@ function ModalCrearProductoDesdeAnalisis({ producto, pin, onCerrar, onCreado }) 
   }, []);
 
   // Inicializar familia: la más probable según la descripción
+  // Sugiere palabras clave y busca la familia del catálogo que mejor encaje
   useEffect(() => {
-    if (!descripcion) return;
+    if (!descripcion || familias.length === 0) return;
     const desc = descripcion.toLowerCase();
-    let fam = "Varios";
-    if (desc.includes("codo") || desc.includes("te ") || desc.includes("manguito") || desc.includes("reduccion") || desc.includes("reducción")) fam = "Accesorios";
-    else if (desc.includes("válvula") || desc.includes("valvula") || desc.includes("filtro")) fam = "Válvulas";
-    else if (desc.includes("tubería") || desc.includes("tuberia") || desc.includes("tubo ")) fam = "Tuberías";
-    else if (desc.includes("aislamiento") || desc.includes("coquilla")) fam = "Aislamiento";
-    else if (desc.includes("contador") || desc.includes("batería")) fam = "Contadores";
-    if (familias.includes(fam)) setFamilia(fam);
-    else if (familias.length > 0) setFamilia(familias[0]);
+
+    // Patrones: claves que sugieren familias
+    const patrones = [
+      { kw: ["codo", "te ", "manguito", "reduccion", "reducción", "tapón", "tapon", "racor", "fitting"], fam: "accesorio" },
+      { kw: ["válvula", "valvula", "filtro", "grifo", "esfera"], fam: "valvula" },
+      { kw: ["tubería", "tuberia", "tubo "], fam: "tuberia" },
+      { kw: ["aislamiento", "coquilla"], fam: "aislamiento" },
+      { kw: ["contador", "batería", "bateria"], fam: "contador" },
+      { kw: ["latón", "laton"], fam: "laton" },
+      { kw: ["cobre"], fam: "cobre" },
+      { kw: ["pvc"], fam: "pvc" },
+      { kw: ["latiguillo", "flexible"], fam: "latiguillo" },
+      { kw: ["abrazadera", "anclaje"], fam: "abrazadera" },
+    ];
+
+    // Encuentra la palabra clave que mejor matchea la descripción
+    let famMatch = null;
+    for (const { kw, fam } of patrones) {
+      if (kw.some(k => desc.includes(k))) {
+        // Busca en las familias del catálogo una que contenga esa palabra
+        const candidata = familias.find(f => f.toLowerCase().includes(fam));
+        if (candidata) { famMatch = candidata; break; }
+      }
+    }
+
+    // Para casos con múltiples patrones (ej. "codo latón"), priorizar la más específica
+    // Ya está cubierto porque iteramos en orden y el primero que encaja gana, así que
+    // ponemos los más específicos arriba en el array
+    if (!famMatch) famMatch = familias[0];
+
+    setFamilia(famMatch);
+    setFiltroFamilia(famMatch); // también para el buscador de asociar
   }, [familias.length]);
 
+  // Helper para mostrar nombre de proveedor (no solo el id)
+  // Buscamos en las facturas qué nombre tienen los proveedores
+  const proveedoresPorId = useMemo(() => {
+    const map = {};
+    // No tenemos acceso directo a los proveedores aquí, pero la prop producto puede traer info
+    // Como mínimo, ponemos el primer carácter del id
+    return map;
+  }, []);
+
+  // Score de similitud entre dos cadenas (0..1)
+  // Cuenta tokens compartidos: cuántas palabras del query aparecen en el target
+  const calcularSimilitud = (query, target) => {
+    if (!query || !target) return 0;
+    const q = query.toLowerCase().replace(/[^\w\s\d]/g, " ").trim();
+    const t = target.toLowerCase().replace(/[^\w\s\d]/g, " ");
+    if (!q) return 0;
+    const tokensQ = q.split(/\s+/).filter(x => x.length >= 2);
+    if (tokensQ.length === 0) return 0;
+    let coincidencias = 0;
+    for (const tok of tokensQ) {
+      if (t.includes(tok)) coincidencias++;
+    }
+    return coincidencias / tokensQ.length;
+  };
+
   // Buscar productos del catálogo que coincidan con la búsqueda
+  // Aplica filtro por familia, busca, ordena por similitud
   const candidatosExistentes = useMemo(() => {
-    if (!busquedaProd.trim()) return [];
+    let resultado = CATALOGO;
+
+    // Filtro por familia (si hay una seleccionada)
+    if (filtroFamilia) {
+      resultado = resultado.filter(p => p.familia === filtroFamilia);
+    }
+
+    // Si no hay query y hay filtro, mostramos los primeros 30 de la familia
+    if (!busquedaProd.trim()) {
+      if (filtroFamilia) return resultado.slice(0, 30);
+      return [];
+    }
+
+    // Filtro de búsqueda: descripción, id o ref de proveedor
     const q = busquedaProd.toLowerCase();
-    return CATALOGO.filter(p =>
+    resultado = resultado.filter(p =>
       p.desc?.toLowerCase().includes(q) ||
       p.id?.toLowerCase().includes(q) ||
       Object.values(p.proveedores || {}).some(pv => pv.ref?.toLowerCase().includes(q))
-    ).slice(0, 10);
-  }, [busquedaProd]);
+    );
+
+    // Ordenar por similitud combinada (query + descripción facturada del proveedor)
+    // De forma que los más relevantes salgan arriba
+    const queryParaSimilitud = busquedaProd + " " + (producto.descFact || "");
+    resultado = resultado
+      .map(p => ({ p, score: calcularSimilitud(queryParaSimilitud, p.desc + " " + (p.familia || "")) }))
+      .sort((a, b) => b.score - a.score)
+      .map(x => x.p);
+
+    return resultado.slice(0, 30);
+  }, [busquedaProd, filtroFamilia, producto.descFact]);
 
   // Datos derivados del producto del análisis
   const apariciones = producto.apariciones.map(a => ({
@@ -7018,28 +7093,87 @@ function ModalCrearProductoDesdeAnalisis({ producto, pin, onCerrar, onCreado }) 
               <div className="text-[11px] text-stone-700 italic">
                 Si este producto YA existe en tu catálogo (con otra descripción), búscalo y asócialo. Útil cuando la IA no encontró el match porque las descripciones son distintas.
               </div>
-              <div>
-                <label className="text-[10px] font-bold tracking-widest text-stone-700">BUSCAR EN CATÁLOGO</label>
-                <input
-                  type="text"
-                  value={busquedaProd}
-                  onChange={(e) => { setBusquedaProd(e.target.value); setProductoExistente(null); }}
-                  placeholder="Busca por descripción, ref o ID…"
-                  autoFocus
-                  className="w-full border-2 border-stone-900 p-2 text-sm font-mono mt-1 focus:outline-none focus:bg-amber-50" />
+              {/* Selector de familia y buscador */}
+              <div className="grid grid-cols-[180px_1fr] gap-2">
+                <div>
+                  <label className="text-[10px] font-bold tracking-widest text-stone-700">FAMILIA</label>
+                  <select
+                    value={filtroFamilia}
+                    onChange={(e) => { setFiltroFamilia(e.target.value); setProductoExistente(null); }}
+                    className="w-full border-2 border-stone-900 p-2 text-sm bg-white mt-1 focus:outline-none focus:bg-amber-50">
+                    <option value="">Todas las familias</option>
+                    {familias.map(f => <option key={f} value={f}>{f}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold tracking-widest text-stone-700">BUSCAR EN CATÁLOGO</label>
+                  <input
+                    type="text"
+                    value={busquedaProd}
+                    onChange={(e) => { setBusquedaProd(e.target.value); setProductoExistente(null); }}
+                    placeholder="Busca por descripción, ref o ID… (ej. codo 18 3/4)"
+                    autoFocus
+                    className="w-full border-2 border-stone-900 p-2 text-sm font-mono mt-1 focus:outline-none focus:bg-amber-50" />
+                </div>
               </div>
+              {/* Hint de uso */}
+              {!busquedaProd.trim() && filtroFamilia && (
+                <div className="text-[10px] text-stone-500 italic">
+                  Mostrando los primeros 30 productos de la familia <b>{filtroFamilia}</b>. Escribe arriba para refinar la búsqueda.
+                </div>
+              )}
+              {!busquedaProd.trim() && !filtroFamilia && (
+                <div className="text-[10px] text-stone-500 italic">
+                  Selecciona una familia o escribe algo para buscar en el catálogo.
+                </div>
+              )}
+              {/* Resultados */}
               {candidatosExistentes.length > 0 && (
-                <div className="border-2 border-stone-900 max-h-64 overflow-y-auto">
-                  {candidatosExistentes.map(p => (
-                    <div key={p.id}
-                      onClick={() => setProductoExistente(p)}
-                      className={`p-2 cursor-pointer border-b border-stone-200 hover:bg-violet-50 ${productoExistente?.id === p.id ? "bg-violet-100 ring-2 ring-violet-600" : ""}`}>
-                      <div className="font-bold text-sm">{p.desc}</div>
-                      <div className="text-[10px] text-stone-500 font-mono">
-                        {p.id} · {p.familia} · {p.unidad}
+                <div className="border-2 border-stone-900 max-h-72 overflow-y-auto">
+                  {candidatosExistentes.map(p => {
+                    // ¿Tiene ya nuestro proveedor configurado? Si sí, marcamos con aviso
+                    const proveedorActual = producto.apariciones[0]?.proveedorId;
+                    const yaConProveedor = proveedorActual && p.proveedores?.[proveedorActual];
+                    const proveedoresKeys = Object.keys(p.proveedores || {});
+                    return (
+                      <div key={p.id}
+                        onClick={() => setProductoExistente(p)}
+                        className={`p-2 cursor-pointer border-b border-stone-200 hover:bg-violet-50 ${productoExistente?.id === p.id ? "bg-violet-100 ring-2 ring-violet-600" : ""}`}>
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="font-bold text-sm">{p.desc}</div>
+                            <div className="text-[10px] text-stone-500 font-mono">
+                              {p.id} · <span className="text-violet-700">{p.familia || "—"}</span> · {p.unidad}
+                            </div>
+                          </div>
+                          {yaConProveedor && (
+                            <div className="text-[9px] bg-amber-100 text-amber-900 border border-amber-400 px-1.5 py-0.5 rounded-sm whitespace-nowrap" title="Este producto YA tiene este proveedor con otra ref. Probablemente NO es el match correcto.">
+                              ⚠ ya con tu proveedor
+                            </div>
+                          )}
+                        </div>
+                        {proveedoresKeys.length > 0 && (
+                          <div className="text-[9px] text-stone-600 font-mono mt-1 truncate">
+                            <span className="text-stone-400">Proveedores:</span> {proveedoresKeys.map(pid => {
+                              const pv = p.proveedores[pid];
+                              const esElNuestro = pid === proveedorActual;
+                              return (
+                                <span key={pid} className={esElNuestro ? "text-amber-700 font-bold" : ""}>
+                                  {pid.substring(0, 3).toUpperCase()}(ref {pv.ref || "—"} · €{pv.bruto?.toFixed(2) || "—"})
+                                </span>
+                              );
+                            }).reduce((acc, el, i) => i === 0 ? [el] : [...acc, " · ", el], [])}
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
+                </div>
+              )}
+              {/* Mensaje si no hay resultados */}
+              {(busquedaProd.trim() || filtroFamilia) && candidatosExistentes.length === 0 && (
+                <div className="border-2 border-stone-200 p-3 text-center text-stone-500 text-xs italic">
+                  No se encontró ningún producto con esos criterios. Quizá tengas que crear uno nuevo.
                 </div>
               )}
               {productoExistente && (
