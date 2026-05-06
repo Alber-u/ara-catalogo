@@ -2891,9 +2891,8 @@ function CatalogoApp({ usuario, onLogout }) {
         </div>
 
         {/* Productos agrupados por TIPO de pieza (codo, machón, te...). 
-            Las cabeceras solo aparecen cuando hay 2+ productos del mismo tipo
-            para evitar ruido visual con tipos que solo tienen 1 unidad. 
-            En móvil las cabeceras son sticky para orientar al operario al hacer scroll. */}
+            Cabeceras prominentes y siempre visibles para orientar al operario en móvil.
+            Sticky para que se queden pegadas arriba al hacer scroll. */}
         {(() => {
           // Agrupar productos por tipo manteniendo el orden ya calculado
           const grupos = [];
@@ -2920,33 +2919,37 @@ function CatalogoApp({ usuario, onLogout }) {
             hilo: "HILOS / SELLADORES", conex: "CONEXIONES",
             codo: "CODOS", te: "TES",
           };
-          return grupos.map((g, gi) => (
-            <div key={"grupo-" + gi} className="mb-4">
-              {g.items.length >= 2 && (
-                <div className="sticky top-[72px] sm:top-[64px] z-10 bg-stone-100/95 backdrop-blur-sm py-1.5 px-3 mb-2 -mx-1 border-l-4 border-stone-900">
-                  <div className="font-mono text-[11px] tracking-widest font-black text-stone-900">
-                    {etiquetaTipo[g.tipo] || g.tipo.toUpperCase().replace("ZZZ_", "")}
-                    <span className="ml-2 text-stone-500 font-normal">· {g.items.length}</span>
+          return grupos.map((g, gi) => {
+            const label = etiquetaTipo[g.tipo] || g.tipo.toUpperCase().replace("ZZZ_", "").replace(/_/g, " ");
+            return (
+              <div key={"grupo-" + gi} className="mb-5">
+                {/* Cabecera prominente — sticky para que el operario sepa siempre dónde está */}
+                <div className="sticky top-[72px] sm:top-[64px] z-10 -mx-4 sm:-mx-0 mb-3 px-4 sm:px-3 py-2.5 bg-stone-900 border-y-4 border-amber-400 shadow-[0_4px_0_0_rgba(0,0,0,0.15)] flex items-center justify-between">
+                  <div className="font-black text-base sm:text-lg tracking-widest text-amber-400" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+                    {label}
+                  </div>
+                  <div className="bg-amber-400 text-stone-900 px-2 py-0.5 text-xs font-black border-2 border-amber-400 min-w-[28px] text-center">
+                    {g.items.length}
                   </div>
                 </div>
-              )}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-                {g.items.map(p => (
-                  <CardProducto
-                    key={p.id}
-                    producto={p}
-                    cantidades={Object.fromEntries(PROVEEDORES.map(pv => [pv.id, getCant(p.id, pv.id)]))}
-                    cantidadesM={Object.fromEntries(PROVEEDORES.map(pv => [pv.id, getCantM(p.id, pv.id)]))}
-                    addProv={(provId) => addProv(p.id, provId)}
-                    removeProv={(provId) => removeProv(p.id, provId)}
-                    setExacta={(provId, n) => setExacta(p.id, provId, n)}
-                    setExactaM={(provId, n) => setExactaM(p.id, provId, n)}
-                    onClick={() => setProductoSel(p)}
-                  />
-                ))}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                  {g.items.map(p => (
+                    <CardProducto
+                      key={p.id}
+                      producto={p}
+                      cantidades={Object.fromEntries(PROVEEDORES.map(pv => [pv.id, getCant(p.id, pv.id)]))}
+                      cantidadesM={Object.fromEntries(PROVEEDORES.map(pv => [pv.id, getCantM(p.id, pv.id)]))}
+                      addProv={(provId) => addProv(p.id, provId)}
+                      removeProv={(provId) => removeProv(p.id, provId)}
+                      setExacta={(provId, n) => setExacta(p.id, provId, n)}
+                      setExactaM={(provId, n) => setExactaM(p.id, provId, n)}
+                      onClick={() => setProductoSel(p)}
+                    />
+                  ))}
+                </div>
               </div>
-            </div>
-          ));
+            );
+          });
         })()}
 
         {productos.length === 0 && (
