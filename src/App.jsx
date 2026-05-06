@@ -3650,6 +3650,27 @@ function PestañaProductos({ data, api, reload }) {
   const [filtroProveedorModo, setFiltroProveedorModo] = useState("con"); // "con" | "sin"
   const [orden, setOrden] = useState("desc"); // desc | familia | precioAsc | precioDesc | recientes
   const [verDuplicados, setVerDuplicados] = useState(false);
+  const [umbralDuplicados, setUmbralDuplicados] = useState("estricto"); // estricto (80%) | normal (60%) | permisivo (40%)
+
+  // Pares de duplicados descartados manualmente (persistente en localStorage)
+  // Formato: Set de strings "idA__idB" (ordenado alfabéticamente para que sea consistente)
+  const [paresDescartados, setParesDescartados] = useState(() => {
+    try {
+      const raw = window.localStorage.getItem("ara-duplicados-descartados");
+      return new Set(raw ? JSON.parse(raw) : []);
+    } catch { return new Set(); }
+  });
+
+  const guardarDescartes = (nuevos) => {
+    setParesDescartados(nuevos);
+    try {
+      window.localStorage.setItem("ara-duplicados-descartados", JSON.stringify(Array.from(nuevos)));
+    } catch (e) { console.warn("No se pudo guardar descartes:", e); }
+  };
+
+  const claveDescartado = (idA, idB) => {
+    return [idA, idB].sort().join("__");
+  };
 
   // Lista de proveedores (para el selector)
   const proveedoresLista = data.proveedores || [];
@@ -3661,32 +3682,80 @@ function PestañaProductos({ data, api, reload }) {
     return Array.from(set).sort();
   }, [data.productos]);
 
-  // Helper: dos descripciones se consideran "muy similares" si comparten ≥3 palabras significativas
-  const sonDuplicados = (a, b) => {
-    if (!a || !b) return false;
-    const tokens = (s) => new Set(s.toLowerCase().replace(/[^\w\s\d]/g, " ").split(/\s+/).filter(t => t.length >= 3));
-    const tA = tokens(a), tB = tokens(b);
-    let comunes = 0;
-    for (const t of tA) if (tB.has(t)) comunes++;
-    // Considera duplicado si comparten ≥3 tokens Y las descripciones tienen <60% de diferencia
-    return comunes >= 3 && Math.abs(tA.size - tB.size) <= 2;
+  // Helper: tokeniza una descripción en palabras significativas (≥3 letras)
+  const tokenizar = (s) => {
+    if (!s) return new Set();
+    return new Set(
+      s.toLowerCase()
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // sin acentos
+        .replace(/[^\w\s\d]/g, " ")
+        .split(/\s+/)
+        .filter(t => t.length >= 3)
+    );
   };
 
-  // Marcar productos sospechosos de ser duplicados
-  const productosConDuplicados = useMemo(() => {
-    if (!verDuplicados) return new Set();
-    const sospechosos = new Set();
+  // Helper: extrae números/medidas (incluye decimales y fracciones tipo "3/4")
+  const extraerNumeros = (s) => {
+    if (!s) return new Set();
+    return new Set((s.match(/\d+(?:[.,]\d+)?(?:\/\d+)?/g) || []));
+  };
+
+  // Score de similitud (0..1): combina Jaccard de tokens + similitud de números/medidas
+  // Los números pesan más porque distinguen tamaños (3/4" vs 1/2", 50×40 vs 63×40)
+  const calcularSimilitud = (a, b) => {
+    if (!a || !b || a === b) return a === b ? 1 : 0;
+    const tA = tokenizar(a), tB = tokenizar(b);
+    if (tA.size === 0 || tB.size === 0) return 0;
+
+    // Jaccard: intersección / unión
+    let comunesT = 0;
+    for (const t of tA) if (tB.has(t)) comunesT++;
+    const unionT = tA.size + tB.size - comunesT;
+    const scoreTokens = unionT > 0 ? comunesT / unionT : 0;
+
+    // Números: si comparten medidas exactas, sube el score; si difieren, baja
+    const nA = extraerNumeros(a), nB = extraerNumeros(b);
+    let scoreNumeros = 1; // por defecto neutro
+    if (nA.size > 0 || nB.size > 0) {
+      let comunesN = 0;
+      for (const n of nA) if (nB.has(n)) comunesN++;
+      const unionN = nA.size + nB.size - comunesN;
+      scoreNumeros = unionN > 0 ? comunesN / unionN : 0;
+      // Si tienen números pero NINGUNO coincide, son productos distintos casi seguro
+      // (ej. "Reducción 125-110" vs "Reducción 145-110" → distintos tamaños)
+      if (nA.size > 0 && nB.size > 0 && comunesN === 0) return 0;
+    }
+
+    // Score combinado: 70% tokens + 30% números (los números actúan más como filtro)
+    return scoreTokens * 0.7 + scoreNumeros * 0.3;
+  };
+
+  // Calcular pares de duplicados con su score
+  const paresDuplicados = useMemo(() => {
+    if (!verDuplicados) return [];
+    const umbrales = { estricto: 0.8, normal: 0.6, permisivo: 0.4 };
+    const umbral = umbrales[umbralDuplicados] || 0.8;
+    const pares = [];
     const lista = data.productos || [];
     for (let i = 0; i < lista.length; i++) {
       for (let j = i + 1; j < lista.length; j++) {
-        if (sonDuplicados(lista[i].desc, lista[j].desc)) {
-          sospechosos.add(lista[i].id);
-          sospechosos.add(lista[j].id);
+        const score = calcularSimilitud(lista[i].desc, lista[j].desc);
+        if (score >= umbral) {
+          // Filtrar pares descartados manualmente
+          if (paresDescartados.has(claveDescartado(lista[i].id, lista[j].id))) continue;
+          pares.push({ a: lista[i], b: lista[j], score });
         }
       }
     }
-    return sospechosos;
-  }, [data.productos, verDuplicados]);
+    return pares.sort((x, y) => y.score - x.score); // mayor score primero
+  }, [data.productos, verDuplicados, umbralDuplicados, paresDescartados]);
+
+  // Set de IDs implicados (para resaltar filas)
+  const productosConDuplicados = useMemo(() => {
+    const set = new Set();
+    paresDuplicados.forEach(({ a, b }) => { set.add(a.id); set.add(b.id); });
+    return set;
+  }, [paresDuplicados]);
 
   // Aplicar filtros
   const productos = useMemo(() => {
@@ -3743,6 +3812,18 @@ function PestañaProductos({ data, api, reload }) {
 
   // ¿Hay algún filtro activo? (para mostrar el botón "limpiar filtros")
   const hayFiltrosActivos = busq || filtroFamilia || filtroProveedor || verDuplicados || orden !== "desc";
+
+  // Handler para descartar un par como "no es duplicado"
+  const handleDescartarPar = (idA, idB) => {
+    const nuevos = new Set(paresDescartados);
+    nuevos.add(claveDescartado(idA, idB));
+    guardarDescartes(nuevos);
+  };
+
+  const handleResetearDescartes = () => {
+    if (!confirm(`¿Resetear los ${paresDescartados.size} descartes manuales? Volverán a aparecer los pares marcados como "no duplicado".`)) return;
+    guardarDescartes(new Set());
+  };
 
   const handleBorrar = async (id) => {
     if (!confirm("¿Borrar este producto del catálogo? No afecta a pedidos ya hechos.")) return;
@@ -3855,6 +3936,27 @@ function PestañaProductos({ data, api, reload }) {
             {verDuplicados ? "🔍 Solo duplicados" : "🔍 Buscar duplicados"}
           </button>
 
+          {verDuplicados && (
+            <select
+              value={umbralDuplicados}
+              onChange={(e) => setUmbralDuplicados(e.target.value)}
+              title="Umbral de similitud: estricto = menos resultados pero más fiables; permisivo = más resultados, más falsos positivos"
+              className="border border-rose-400 px-2 py-1 text-[10px] bg-rose-50 focus:outline-none focus:bg-amber-50">
+              <option value="estricto">Umbral: estricto (≥80%)</option>
+              <option value="normal">Umbral: normal (≥60%)</option>
+              <option value="permisivo">Umbral: permisivo (≥40%)</option>
+            </select>
+          )}
+
+          {paresDescartados.size > 0 && verDuplicados && (
+            <button
+              onClick={handleResetearDescartes}
+              title={`${paresDescartados.size} pares marcados como "no duplicado". Pulsa para reiniciar.`}
+              className="px-2 py-1 text-[10px] font-bold border border-stone-400 bg-stone-100 hover:bg-stone-200 text-stone-700">
+              ↻ Resetear descartes ({paresDescartados.size})
+            </button>
+          )}
+
           {hayFiltrosActivos && (
             <button
               onClick={() => { setBusq(""); setFiltroFamilia(""); setFiltroProveedor(""); setFiltroProveedorModo("con"); setVerDuplicados(false); setOrden("desc"); }}
@@ -3886,8 +3988,65 @@ function PestañaProductos({ data, api, reload }) {
 
       <div className="text-[10px] text-stone-500 tracking-widest">
         {productos.length} de {data.productos.length} productos
-        {verDuplicados && productosConDuplicados.size > 0 && ` · ⚠️ ${productosConDuplicados.size} sospechosos de duplicado`}
+        {verDuplicados && paresDuplicados.length > 0 && ` · ⚠️ ${paresDuplicados.length} par${paresDuplicados.length === 1 ? "" : "es"} sospechoso${paresDuplicados.length === 1 ? "" : "s"}`}
       </div>
+
+      {/* Panel de pares de duplicados — solo visible cuando hay análisis activo */}
+      {verDuplicados && (
+        paresDuplicados.length === 0 ? (
+          <div className="bg-emerald-50 border-2 border-emerald-400 p-3 text-xs text-emerald-900">
+            <b>✅ No se han detectado duplicados</b> con el umbral actual ({umbralDuplicados}). Si crees que sí los hay, prueba un umbral más permisivo o resetea los descartes.
+          </div>
+        ) : (
+          <div className="bg-rose-50 border-2 border-rose-700 p-3 space-y-2">
+            <div className="text-[11px] font-bold text-rose-900">
+              ⚠️ PARES SOSPECHOSOS DE SER EL MISMO PRODUCTO ({paresDuplicados.length})
+            </div>
+            <div className="text-[10px] text-rose-800 italic">
+              Si crees que NO son duplicados, púlsale "✕ no es duplicado" y no volverán a aparecer. Los descartes se guardan localmente en este navegador.
+            </div>
+            <div className="space-y-1.5 max-h-72 overflow-y-auto">
+              {paresDuplicados.slice(0, 50).map(({ a, b, score }) => {
+                const pctScore = Math.round(score * 100);
+                const colorScore = pctScore >= 90 ? "bg-red-700" : pctScore >= 75 ? "bg-orange-600" : "bg-amber-600";
+                return (
+                  <div key={a.id + "__" + b.id} className="bg-white border border-rose-400 p-2 flex items-start gap-2 text-[11px]">
+                    <span className={`${colorScore} text-white font-bold px-1.5 py-0.5 text-[9px] rounded-sm whitespace-nowrap`}>{pctScore}%</span>
+                    <div className="flex-1 min-w-0 space-y-0.5">
+                      <div>
+                        <span className="text-[9px] text-stone-500 font-mono">{a.familia || "—"}</span>{" "}
+                        <span className="font-bold">{a.desc}</span>
+                        <button onClick={() => setEditando(a)}
+                          className="ml-1 text-[9px] font-bold bg-amber-500 text-stone-900 px-1 py-0.5 border border-stone-900 hover:bg-amber-400">
+                          ✏
+                        </button>
+                      </div>
+                      <div>
+                        <span className="text-[9px] text-stone-500 font-mono">{b.familia || "—"}</span>{" "}
+                        <span className="font-bold">{b.desc}</span>
+                        <button onClick={() => setEditando(b)}
+                          className="ml-1 text-[9px] font-bold bg-amber-500 text-stone-900 px-1 py-0.5 border border-stone-900 hover:bg-amber-400">
+                          ✏
+                        </button>
+                      </div>
+                    </div>
+                    <button onClick={() => handleDescartarPar(a.id, b.id)}
+                      title="Marcar este par como NO duplicado para que no vuelva a aparecer"
+                      className="text-[9px] font-bold bg-stone-100 text-stone-700 px-2 py-1 border border-stone-400 hover:bg-stone-200 whitespace-nowrap">
+                      ✕ no es duplicado
+                    </button>
+                  </div>
+                );
+              })}
+              {paresDuplicados.length > 50 && (
+                <div className="text-[10px] text-rose-700 italic text-center pt-1">
+                  Mostrando los primeros 50 pares. Sube el umbral para ver menos.
+                </div>
+              )}
+            </div>
+          </div>
+        )
+      )}
 
       {/* Tabla productos */}
       <div className="bg-white border-2 border-stone-900 overflow-x-auto">
