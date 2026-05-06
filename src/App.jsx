@@ -3651,6 +3651,7 @@ function PestañaProductos({ data, api, reload, pin }) {
   const [busq, setBusq] = useState("");
   const [validando, setValidando] = useState(null); // pendiente que se valida
   const [modalImportar, setModalImportar] = useState(false);
+  const [generandoNombres, setGenerandoNombres] = useState(false);
   // Filtros nuevos
   const [filtroFamilia, setFiltroFamilia] = useState("");
   const [filtroProveedor, setFiltroProveedor] = useState(""); // id del proveedor
@@ -4027,7 +4028,7 @@ function PestañaProductos({ data, api, reload, pin }) {
                   className="text-[10px] font-bold tracking-widest px-3 py-1.5 border-2 border-stone-900 bg-stone-100 hover:bg-stone-200 text-stone-900">
             📋 PLANTILLA CSV
           </button>
-          <button onClick={async () => {
+          <button disabled={generandoNombres} onClick={async () => {
             const totalSinNombre = (data.productos || []).filter(p => !p.nombreCorto).length;
             const totalProductos = (data.productos || []).length;
             const opciones = [
@@ -4041,12 +4042,15 @@ Esto crea nombres más cortos y entendibles para que tus operarios los lean ráp
 
 Coste aproximado: ~5-15 céntimos según volumen.
 
+⏳ TARDARÁ 30-60 SEGUNDOS — no cierres la pestaña.
+
 Elige opción:
 ${opciones}
 
 Escribe 1, 2 o 3:`, "1");
             if (elec === "3" || !elec) return;
             const soloVacios = elec === "1";
+            setGenerandoNombres(true);
             try {
               const r = await fetch("https://araujo-bot.onrender.com/api/facturas/generar-nombres-cortos", {
                 method: "POST",
@@ -4067,10 +4071,12 @@ ${(datos.ejemplos || []).map(e => `  · ${e.nombreCorto}`).join("\n")}`);
               if (typeof reload === "function") reload();
             } catch (e) {
               alert("Error: " + (e.message || e));
+            } finally {
+              setGenerandoNombres(false);
             }
           }}
-                  className="text-[10px] font-bold tracking-widest px-3 py-1.5 border-2 border-stone-900 bg-violet-200 hover:bg-violet-300 text-stone-900">
-            🤖 NOMBRES CORTOS IA
+                  className={`text-[10px] font-bold tracking-widest px-3 py-1.5 border-2 border-stone-900 ${generandoNombres ? "bg-amber-300 cursor-wait animate-pulse" : "bg-violet-200 hover:bg-violet-300"} text-stone-900`}>
+            {generandoNombres ? "⏳ GENERANDO… NO CIERRES" : "🤖 NOMBRES CORTOS IA"}
           </button>
         </div>
       </div>
@@ -4116,6 +4122,11 @@ ${(datos.ejemplos || []).map(e => `  · ${e.nombreCorto}`).join("\n")}`);
                     <td className="p-2 text-[10px] text-stone-500">{p.familia}</td>
                     <td className="p-2 font-bold">
                       {p.desc}
+                      {p.nombreCorto && (
+                        <div className="text-[10px] font-normal text-violet-700 mt-0.5 italic">
+                          👷 Operario ve: <span className="font-mono">{p.nombreCorto}</span>
+                        </div>
+                      )}
                       {otrosProvs.length > 0 && (
                         <span className="ml-2 inline-flex gap-1 align-middle">
                           {otrosProvs.map(([pid, pv]) => {
@@ -4982,6 +4993,7 @@ function ModalImportarProductos({ productosActuales, api, reload, onCerrar }) {
 function ModalEditarProducto({ producto, api, reload, onCerrar, plantillaInicial, esValidacion }) {
   const inicial = producto || plantillaInicial || { desc: "", familia: "Varios", unidad: "uni", img: "tapon" };
   const [desc, setDesc] = useState(inicial.desc || "");
+  const [nombreCorto, setNombreCorto] = useState(inicial.nombreCorto || "");
   const [familia, setFamilia] = useState(inicial.familia || "Varios");
   const [unidad, setUnidad] = useState(inicial.unidad || "uni");
   const [img, setImg] = useState(inicial.img || "tapon");
@@ -5011,7 +5023,7 @@ function ModalEditarProducto({ producto, api, reload, onCerrar, plantillaInicial
           proveedores[prov.id] = { ref: d.ref, bruto: parseFloat(d.bruto), dto: parseFloat(d.dto) || 0, marca: d.marca || "—" };
         }
       });
-      const body = { desc, familia, unidad, img, proveedores, cantidadPorUnidad: cantPorUnidad ? parseFloat(cantPorUnidad) : null };
+      const body = { desc, nombreCorto: nombreCorto.trim() || null, familia, unidad, img, proveedores, cantidadPorUnidad: cantPorUnidad ? parseFloat(cantPorUnidad) : null };
       if (esValidacion) {
         await api.post("/admin/pendiente/" + esValidacion.id + "/validar", body);
       } else if (producto) {
@@ -5043,9 +5055,17 @@ function ModalEditarProducto({ producto, api, reload, onCerrar, plantillaInicial
 
         <div className="p-4 space-y-3">
           <div>
-            <label className="text-[10px] tracking-widest font-bold text-stone-700 mb-1 block">DESCRIPCIÓN</label>
+            <label className="text-[10px] tracking-widest font-bold text-stone-700 mb-1 block">DESCRIPCIÓN <span className="text-stone-500 normal-case font-normal">(la que ven proveedores y va en informes)</span></label>
             <input type="text" value={desc} onChange={(e) => setDesc(e.target.value)}
                    className="w-full border-2 border-stone-900 p-2 text-sm focus:bg-amber-50 focus:outline-none font-mono" />
+          </div>
+          <div>
+            <label className="text-[10px] tracking-widest font-bold text-violet-700 mb-1 block">👷 NOMBRE OPERARIO <span className="text-stone-500 normal-case font-normal">(opcional · lo que verá el operario en obra)</span></label>
+            <input type="text" value={nombreCorto} onChange={(e) => setNombreCorto(e.target.value)}
+                   placeholder="Si lo dejas vacío, el operario verá la descripción técnica"
+                   maxLength={50}
+                   className="w-full border-2 border-violet-700 p-2 text-sm focus:bg-violet-50 focus:outline-none font-mono" />
+            <div className="text-[9px] text-stone-500 mt-1">{nombreCorto.length}/50 caracteres</div>
           </div>
           <div className="grid grid-cols-3 gap-2">
             <div>
