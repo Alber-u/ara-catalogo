@@ -3991,61 +3991,11 @@ function PestañaProductos({ data, api, reload }) {
         {verDuplicados && paresDuplicados.length > 0 && ` · ⚠️ ${paresDuplicados.length} par${paresDuplicados.length === 1 ? "" : "es"} sospechoso${paresDuplicados.length === 1 ? "" : "s"}`}
       </div>
 
-      {/* Panel de pares de duplicados — solo visible cuando hay análisis activo */}
-      {verDuplicados && (
-        paresDuplicados.length === 0 ? (
-          <div className="bg-emerald-50 border-2 border-emerald-400 p-3 text-xs text-emerald-900">
-            <b>✅ No se han detectado duplicados</b> con el umbral actual ({umbralDuplicados}). Si crees que sí los hay, prueba un umbral más permisivo o resetea los descartes.
-          </div>
-        ) : (
-          <div className="bg-rose-50 border-2 border-rose-700 p-3 space-y-2">
-            <div className="text-[11px] font-bold text-rose-900">
-              ⚠️ PARES SOSPECHOSOS DE SER EL MISMO PRODUCTO ({paresDuplicados.length})
-            </div>
-            <div className="text-[10px] text-rose-800 italic">
-              Si crees que NO son duplicados, púlsale "✕ no es duplicado" y no volverán a aparecer. Los descartes se guardan localmente en este navegador.
-            </div>
-            <div className="space-y-1.5 max-h-72 overflow-y-auto">
-              {paresDuplicados.slice(0, 50).map(({ a, b, score }) => {
-                const pctScore = Math.round(score * 100);
-                const colorScore = pctScore >= 90 ? "bg-red-700" : pctScore >= 75 ? "bg-orange-600" : "bg-amber-600";
-                return (
-                  <div key={a.id + "__" + b.id} className="bg-white border border-rose-400 p-2 flex items-start gap-2 text-[11px]">
-                    <span className={`${colorScore} text-white font-bold px-1.5 py-0.5 text-[9px] rounded-sm whitespace-nowrap`}>{pctScore}%</span>
-                    <div className="flex-1 min-w-0 space-y-0.5">
-                      <div>
-                        <span className="text-[9px] text-stone-500 font-mono">{a.familia || "—"}</span>{" "}
-                        <span className="font-bold">{a.desc}</span>
-                        <button onClick={() => setEditando(a)}
-                          className="ml-1 text-[9px] font-bold bg-amber-500 text-stone-900 px-1 py-0.5 border border-stone-900 hover:bg-amber-400">
-                          ✏
-                        </button>
-                      </div>
-                      <div>
-                        <span className="text-[9px] text-stone-500 font-mono">{b.familia || "—"}</span>{" "}
-                        <span className="font-bold">{b.desc}</span>
-                        <button onClick={() => setEditando(b)}
-                          className="ml-1 text-[9px] font-bold bg-amber-500 text-stone-900 px-1 py-0.5 border border-stone-900 hover:bg-amber-400">
-                          ✏
-                        </button>
-                      </div>
-                    </div>
-                    <button onClick={() => handleDescartarPar(a.id, b.id)}
-                      title="Marcar este par como NO duplicado para que no vuelva a aparecer"
-                      className="text-[9px] font-bold bg-stone-100 text-stone-700 px-2 py-1 border border-stone-400 hover:bg-stone-200 whitespace-nowrap">
-                      ✕ no es duplicado
-                    </button>
-                  </div>
-                );
-              })}
-              {paresDuplicados.length > 50 && (
-                <div className="text-[10px] text-rose-700 italic text-center pt-1">
-                  Mostrando los primeros 50 pares. Sube el umbral para ver menos.
-                </div>
-              )}
-            </div>
-          </div>
-        )
+      {/* Aviso si no hay duplicados detectados */}
+      {verDuplicados && paresDuplicados.length === 0 && (
+        <div className="bg-emerald-50 border-2 border-emerald-400 p-3 text-xs text-emerald-900">
+          <b>✅ No se han detectado duplicados</b> con el umbral actual ({umbralDuplicados}). Si crees que sí los hay, prueba un umbral más permisivo o resetea los descartes.
+        </div>
       )}
 
       {/* Tabla productos */}
@@ -4063,58 +4013,96 @@ function PestañaProductos({ data, api, reload }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-stone-200">
-            {productos.slice(0, 100).map(p => {
-              const aq = p.proveedores?.aqua;
-              const ar = p.proveedores?.aram;
-              const netoA = aq ? +(aq.bruto * (1 - aq.dto / 100)).toFixed(2) : null;
-              const netoR = ar ? +(ar.bruto * (1 - ar.dto / 100)).toFixed(2) : null;
-              const esDuplicado = verDuplicados && productosConDuplicados.has(p.id);
-              // Otros proveedores (que no son aqua ni aram) para mostrar como chips
-              const otrosProvs = Object.entries(p.proveedores || {}).filter(([k]) => k !== "aqua" && k !== "aram");
-              return (
-                <tr key={p.id} className={`hover:bg-amber-50 ${esDuplicado ? "bg-rose-50" : ""}`}>
-                  <td className="p-2 text-[10px] text-stone-500">
-                    {p.familia}
-                    {esDuplicado && <span className="ml-1 text-rose-700" title="Posible duplicado">⚠</span>}
-                  </td>
-                  <td className="p-2 font-bold">
-                    {p.desc}
-                    {otrosProvs.length > 0 && (
-                      <span className="ml-2 inline-flex gap-1 align-middle">
-                        {otrosProvs.map(([pid, pv]) => {
-                          const provNombre = proveedoresLista.find(x => x.id === pid)?.nombre || pid;
-                          const precio = pv.bruto ? +(pv.bruto * (1 - (pv.dto || 0) / 100)).toFixed(2) : null;
-                          return (
-                            <span key={pid}
-                              title={`${provNombre} · ref ${pv.ref || "—"}${precio !== null ? " · €" + precio : ""}`}
-                              className="text-[9px] font-bold px-1 py-0.5 bg-violet-100 text-violet-800 border border-violet-300 rounded-sm font-mono">
-                              {pid.toUpperCase().substring(0, 4)}
-                            </span>
-                          );
-                        })}
-                      </span>
-                    )}
-                  </td>
-                  <td className="p-2 font-mono text-[10px]">{aq?.ref || "—"}</td>
-                  <td className="p-2 text-right font-mono">{netoA ? "€" + netoA : "—"}</td>
-                  <td className="p-2 font-mono text-[10px]">{ar?.ref || "—"}</td>
-                  <td className="p-2 text-right font-mono">{netoR ? "€" + netoR : "—"}</td>
-                  <td className="p-2 text-right whitespace-nowrap">
-                    <button onClick={() => setEditando(p)}
-                            className="text-[10px] font-bold bg-amber-500 text-stone-900 px-2 py-1 border border-stone-900 hover:bg-amber-400 mr-1">
-                      ✏ EDITAR
-                    </button>
-                    <button onClick={() => handleBorrar(p.id)}
-                            className="text-[10px] font-bold bg-red-600 text-white px-2 py-1 border border-stone-900 hover:bg-red-700">
-                      🗑
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
+            {/* Helper: render de una fila de producto reutilizable */}
+            {(() => {
+              // Función helper local que devuelve el JSX de UNA fila de producto
+              const renderFila = (p, opts = {}) => {
+                const aq = p.proveedores?.aqua;
+                const ar = p.proveedores?.aram;
+                const netoA = aq ? +(aq.bruto * (1 - aq.dto / 100)).toFixed(2) : null;
+                const netoR = ar ? +(ar.bruto * (1 - ar.dto / 100)).toFixed(2) : null;
+                const otrosProvs = Object.entries(p.proveedores || {}).filter(([k]) => k !== "aqua" && k !== "aram");
+                return (
+                  <tr key={p.id} className={`hover:bg-amber-50 ${opts.bg || ""}`}>
+                    <td className="p-2 text-[10px] text-stone-500">{p.familia}</td>
+                    <td className="p-2 font-bold">
+                      {p.desc}
+                      {otrosProvs.length > 0 && (
+                        <span className="ml-2 inline-flex gap-1 align-middle">
+                          {otrosProvs.map(([pid, pv]) => {
+                            const provNombre = proveedoresLista.find(x => x.id === pid)?.nombre || pid;
+                            const precio = pv.bruto ? +(pv.bruto * (1 - (pv.dto || 0) / 100)).toFixed(2) : null;
+                            return (
+                              <span key={pid}
+                                title={`${provNombre} · ref ${pv.ref || "—"}${precio !== null ? " · €" + precio : ""}`}
+                                className="text-[9px] font-bold px-1 py-0.5 bg-violet-100 text-violet-800 border border-violet-300 rounded-sm font-mono">
+                                {pid.toUpperCase().substring(0, 4)}
+                              </span>
+                            );
+                          })}
+                        </span>
+                      )}
+                    </td>
+                    <td className="p-2 font-mono text-[10px]">{aq?.ref || "—"}</td>
+                    <td className="p-2 text-right font-mono">{netoA ? "€" + netoA : "—"}</td>
+                    <td className="p-2 font-mono text-[10px]">{ar?.ref || "—"}</td>
+                    <td className="p-2 text-right font-mono">{netoR ? "€" + netoR : "—"}</td>
+                    <td className="p-2 text-right whitespace-nowrap">
+                      <button onClick={() => setEditando(p)}
+                              className="text-[10px] font-bold bg-amber-500 text-stone-900 px-2 py-1 border border-stone-900 hover:bg-amber-400 mr-1">
+                        ✏ EDITAR
+                      </button>
+                      <button onClick={() => handleBorrar(p.id)}
+                              className="text-[10px] font-bold bg-red-600 text-white px-2 py-1 border border-stone-900 hover:bg-red-700">
+                        🗑
+                      </button>
+                    </td>
+                  </tr>
+                );
+              };
+
+              // ── MODO DUPLICADOS: render por pares con cabecera ──
+              if (verDuplicados && paresDuplicados.length > 0) {
+                return paresDuplicados.slice(0, 50).flatMap(({ a, b, score }, idx) => {
+                  const pctScore = Math.round(score * 100);
+                  const colorScore = pctScore >= 90 ? "bg-red-700" : pctScore >= 75 ? "bg-orange-600" : "bg-amber-600";
+                  const claveK = a.id + "__" + b.id;
+                  return [
+                    // Cabecera del par
+                    <tr key={claveK + "-h"} className="bg-rose-100 border-t-4 border-rose-700">
+                      <td colSpan={7} className="p-1.5">
+                        <div className="flex items-center gap-2 text-[10px]">
+                          <span className={`${colorScore} text-white font-bold px-1.5 py-0.5 rounded-sm`}>
+                            {pctScore}% similar
+                          </span>
+                          <span className="font-bold text-rose-900 tracking-widest">PAR #{idx + 1} — POSIBLE DUPLICADO</span>
+                          <button onClick={() => handleDescartarPar(a.id, b.id)}
+                            title="Marcar este par como NO duplicado para que no vuelva a aparecer"
+                            className="ml-auto text-[9px] font-bold bg-white text-stone-700 px-2 py-1 border border-stone-400 hover:bg-stone-100">
+                            ✕ no es duplicado
+                          </button>
+                        </div>
+                      </td>
+                    </tr>,
+                    // Producto A
+                    renderFila(a, { bg: "bg-rose-50" }),
+                    // Producto B
+                    renderFila(b, { bg: "bg-rose-50" }),
+                  ];
+                });
+              }
+
+              // ── MODO NORMAL: render lineal ──
+              return productos.slice(0, 100).map(p => renderFila(p));
+            })()}
           </tbody>
         </table>
-        {productos.length > 100 && (
+        {verDuplicados && paresDuplicados.length > 50 && (
+          <div className="p-3 text-xs text-rose-700 text-center bg-rose-50 italic">
+            Mostrando los primeros 50 pares de {paresDuplicados.length}. Sube el umbral para ver menos.
+          </div>
+        )}
+        {!verDuplicados && productos.length > 100 && (
           <div className="p-3 text-xs text-stone-500 text-center bg-stone-50">
             Mostrando los primeros 100 de {productos.length}. Usa el buscador para filtrar.
           </div>
