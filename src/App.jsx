@@ -5462,8 +5462,10 @@ function PestañaFacturas({ api, pin }) {
           <ModalAnalisisProductos
             facturas={facturasParaAnalisis}
             filtrosActivos={{ busqueda, proveedor: filtroProveedor, estado: filtroEstado }}
+            pin={pin}
             onCerrar={() => setMostrarAnalisis(false)}
             onAbrirFactura={(f) => { setMostrarAnalisis(false); setFacturaAbierta(f); }}
+            onCambioCatalogo={() => { cargar(); /* recarga facturas tras crear/asociar producto */ }}
           />
         );
       })()}
@@ -5488,6 +5490,7 @@ function ModalEquivalencias({ pin, onCerrar }) {
   const [filtroProveedor, setFiltroProveedor] = useState("todos");
   const [editando, setEditando] = useState(null); // idx que está editando
   const [busquedaProd, setBusquedaProd] = useState("");
+  const [migrando, setMigrando] = useState(false);
   const FAC_URL = "https://araujo-bot.onrender.com/api/facturas";
 
   const cargar = async () => {
@@ -5573,6 +5576,36 @@ function ModalEquivalencias({ pin, onCerrar }) {
             <b>¿Qué son las equivalencias?</b> Cada vez que aplicas una factura al catálogo, la app aprende qué referencia de proveedor corresponde a qué producto del catálogo. Esto acelera futuras facturas: cuando vuelva a aparecer la misma referencia, la IA la matcheará automáticamente con confianza alta.
             <br /><br />
             <b>¿Por qué editar?</b> Si en algún momento aplicaste una factura con un match incorrecto (ej. la IA confundió un codo de latón con uno de plástico), la equivalencia mala quedó guardada. Aquí puedes corregirla o borrarla para que las próximas facturas no la repitan.
+          </div>
+
+          {/* Mantenimiento del sistema */}
+          <div className="bg-amber-50 border-2 border-amber-400 p-3 text-[11px] text-amber-900 flex items-start gap-3">
+            <div className="flex-1">
+              <b>🔧 Mantenimiento:</b> Si el modal de Análisis sigue mostrando productos como 🆕 Nuevo aunque ya estén creados en el catálogo, es que esas facturas se aplicaron antes de un fix que añadimos hace poco. Pulsa este botón para sincronizar el estado interno y que el Análisis las muestre correctamente. Es seguro — no toca el catálogo, solo actualiza metadata.
+            </div>
+            <button
+              onClick={async () => {
+                if (migrando) return;
+                if (!confirm("¿Sincronizar el estado de las facturas ya aplicadas?\n\nNo se modificará el catálogo, solo la metadata interna de las facturas. Es una operación segura y se puede ejecutar varias veces sin riesgo.")) return;
+                setMigrando(true);
+                try {
+                  const r = await fetch(FAC_URL + "/migrar/marcar-aplicadas", {
+                    method: "POST",
+                    headers: { "x-admin-pin": pin, "Content-Type": "application/json" }
+                  });
+                  const data = await r.json();
+                  if (!r.ok) throw new Error(data.error || "Error en la migración");
+                  alert("✅ " + data.mensaje);
+                } catch (e) {
+                  alert("Error: " + e.message);
+                } finally {
+                  setMigrando(false);
+                }
+              }}
+              disabled={migrando}
+              className="bg-amber-600 text-white px-3 py-2 text-[10px] font-black tracking-widest border-2 border-amber-800 hover:bg-amber-700 disabled:opacity-50 disabled:cursor-wait whitespace-nowrap">
+              {migrando ? "⏳ SINCRONIZANDO..." : "🔄 SINCRONIZAR"}
+            </button>
           </div>
 
           {/* Filtros */}
@@ -5701,12 +5734,14 @@ function ModalEquivalencias({ pin, onCerrar }) {
   );
 }
 
-function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFactura }) {
+function ModalAnalisisProductos({ facturas, filtrosActivos, pin, onCerrar, onAbrirFactura, onCambioCatalogo }) {
   const [orden, setOrden] = useState("impacto"); // impacto | frecuencia | pct
-  const [filtroDireccion, setFiltroDireccion] = useState("todos"); // todos | sube | baja | sospechoso
+  const [filtroDireccion, setFiltroDireccion] = useState("todos"); // todos | sube | baja | sospechoso | nuevo | pendiente
   const [busquedaProd, setBusquedaProd] = useState("");
   const [productoExpandido, setProductoExpandido] = useState(null);
   const [excluirRectificativas, setExcluirRectificativas] = useState(true); // por defecto SÍ se excluyen
+  const [productoCrear, setProductoCrear] = useState(null); // producto del agregado que se está creando
+  const FAC_URL = "https://araujo-bot.onrender.com/api/facturas";
 
   // Detector de factura rectificativa:
   // 1. Nº de factura contiene "FR" o empieza por "R" (Aquatubo: 26AVFR00117, 25AVFR03182)
@@ -5732,7 +5767,7 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
   const agregado = useMemo(() => {
     const mapa = new Map(); // key → { id, desc, ref, apariciones: [] }
     facturasUsables.forEach(f => {
-      (f.lineasRevision || []).forEach(l => {
+      (f.lineasRevision || []).forEach((l, idx) => {
         // Clave de agregación: id del producto del catálogo si existe, si no la referencia del proveedor
         const key = l.productoSugerido || `ref:${l.lineaOriginal?.referencia_proveedor || ""}|desc:${(l.lineaOriginal?.descripcion_original || "").substring(0, 40)}`;
         if (!mapa.has(key)) {
@@ -5752,6 +5787,8 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
         const impacto = tieneVar ? (l.variacionPrecio.diff || 0) * cant : 0;
         mapa.get(key).apariciones.push({
           facturaId: f.id,
+          lineaIdx: idx, // imprescindible para que el bulk pueda apuntar a la línea exacta
+          proveedorId: l.proveedorId, // necesario para crear/asociar producto
           facturaNombre: f.archivoOriginal,
           numFact: f.datosExtraidos?.numero_factura || "",
           fecha: f.datosExtraidos?.fecha || f.fechaSubida,
@@ -5764,7 +5801,10 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
           sube: tieneVar ? l.variacionPrecio.sube : false,
           baja: tieneVar ? l.variacionPrecio.baja : false,
           impacto,
-          estado: l.estado,
+          // Si la línea ya fue aplicada al catálogo, la consideramos "confirmado"
+          // independientemente del estado original (nuevo, confirmado, etc.)
+          estado: l.aplicada ? "confirmado" : l.estado,
+          aplicada: !!l.aplicada,
           tieneVariacion: tieneVar
         });
       });
@@ -6615,9 +6655,18 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
                           <td className="p-2 font-mono text-[10px]">{p.ref || "—"}</td>
                           <td className="p-2 font-bold">{p.descCat || p.descFact}</td>
                           <td className="p-2 text-center">
-                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-sm whitespace-nowrap ${ec.color}`} title={tooltipMezcla}>
-                              {ec.label}{tieneMezcla ? "*" : ""}
-                            </span>
+                            {p.estadoDominante === "nuevo" && !p.aplicada ? (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setProductoCrear(p); }}
+                                title="Crear este producto en el catálogo o asociarlo a uno existente"
+                                className={`text-[9px] font-bold px-1.5 py-0.5 rounded-sm whitespace-nowrap ${ec.color} hover:bg-blue-200 hover:ring-2 hover:ring-blue-500 cursor-pointer transition-all`}>
+                                {ec.label}{tieneMezcla ? "*" : ""} ▸
+                              </button>
+                            ) : (
+                              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-sm whitespace-nowrap ${ec.color}`} title={tooltipMezcla}>
+                                {ec.label}{tieneMezcla ? "*" : ""}
+                              </span>
+                            )}
                           </td>
                           <td className="p-2 text-right font-mono">{p.apariciones.length}</td>
                           {p.tieneVariacionAlguna ? (
@@ -6726,6 +6775,288 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, onCerrar, onAbrirFac
                   })}
                 </tbody>
               </table>
+            </div>
+          )}
+        </div>
+      </div>
+      {productoCrear && (
+        <ModalCrearProductoDesdeAnalisis
+          producto={productoCrear}
+          pin={pin}
+          onCerrar={() => setProductoCrear(null)}
+          onCreado={() => {
+            setProductoCrear(null);
+            if (onCambioCatalogo) onCambioCatalogo();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  MODAL: Crear producto en catálogo desde el modal Análisis
+//  (o asociar a producto existente)
+// ─────────────────────────────────────────────────────────────────────────
+function ModalCrearProductoDesdeAnalisis({ producto, pin, onCerrar, onCreado }) {
+  const [descripcion, setDescripcion] = useState(producto.descCat || producto.descFact || "");
+  const [familia, setFamilia] = useState("");
+  const [unidad, setUnidad] = useState(producto.unidad || "uni");
+  const [guardando, setGuardando] = useState(false);
+  const [modo, setModo] = useState("crear"); // "crear" | "asociar"
+  const [busquedaProd, setBusquedaProd] = useState("");
+  const [productoExistente, setProductoExistente] = useState(null);
+  const FAC_URL = "https://araujo-bot.onrender.com/api/facturas";
+
+  // Familias únicas del catálogo + opción "(Nueva familia)"
+  const familias = useMemo(() => {
+    const set = new Set();
+    CATALOGO.forEach(p => { if (p.familia) set.add(p.familia); });
+    return Array.from(set).sort();
+  }, []);
+
+  // Inicializar familia: la más probable según la descripción
+  useEffect(() => {
+    if (!descripcion) return;
+    const desc = descripcion.toLowerCase();
+    let fam = "Varios";
+    if (desc.includes("codo") || desc.includes("te ") || desc.includes("manguito") || desc.includes("reduccion") || desc.includes("reducción")) fam = "Accesorios";
+    else if (desc.includes("válvula") || desc.includes("valvula") || desc.includes("filtro")) fam = "Válvulas";
+    else if (desc.includes("tubería") || desc.includes("tuberia") || desc.includes("tubo ")) fam = "Tuberías";
+    else if (desc.includes("aislamiento") || desc.includes("coquilla")) fam = "Aislamiento";
+    else if (desc.includes("contador") || desc.includes("batería")) fam = "Contadores";
+    if (familias.includes(fam)) setFamilia(fam);
+    else if (familias.length > 0) setFamilia(familias[0]);
+  }, [familias.length]);
+
+  // Buscar productos del catálogo que coincidan con la búsqueda
+  const candidatosExistentes = useMemo(() => {
+    if (!busquedaProd.trim()) return [];
+    const q = busquedaProd.toLowerCase();
+    return CATALOGO.filter(p =>
+      p.desc?.toLowerCase().includes(q) ||
+      p.id?.toLowerCase().includes(q) ||
+      Object.values(p.proveedores || {}).some(pv => pv.ref?.toLowerCase().includes(q))
+    ).slice(0, 10);
+  }, [busquedaProd]);
+
+  // Datos derivados del producto del análisis
+  const apariciones = producto.apariciones.map(a => ({
+    facturaId: a.facturaId,
+    lineaIdx: producto.apariciones.indexOf(a) // orden en el array original
+  }));
+  // FIX: apariciones tienen que tener lineaIdx real, no el del array agregado
+  const aparicionesReales = producto.apariciones.map(a => ({
+    facturaId: a.facturaId,
+    lineaIdx: a.lineaIdx !== undefined ? a.lineaIdx : 0
+  }));
+  const proveedorId = producto.apariciones[0]?.proveedorId || producto.apariciones[0]?.facturaId; // se ajusta abajo
+  const refProv = producto.ref;
+  const ultimoPrecio = producto.apariciones.slice().sort((a, b) => (b.fecha || "").localeCompare(a.fecha || ""))[0]?.precioFactura || 0;
+
+  const handleCrear = async () => {
+    if (!descripcion.trim()) { alert("La descripción no puede estar vacía"); return; }
+    if (guardando) return;
+    setGuardando(true);
+    try {
+      // Necesitamos enriquecer con lineaIdx real y proveedorId real, mirando las facturas reales
+      const payload = {
+        descripcion: descripcion.trim(),
+        familia: familia.trim() || "Varios",
+        unidad: unidad.trim() || "uni",
+        referenciaProveedor: refProv,
+        proveedorId: producto.apariciones[0]?.proveedorId,
+        precioFacturado: ultimoPrecio,
+        apariciones: producto.apariciones.map(a => ({
+          facturaId: a.facturaId,
+          lineaIdx: a.lineaIdx
+        }))
+      };
+      const r = await fetch(FAC_URL + "/crear-producto-bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-admin-pin": pin },
+        body: JSON.stringify(payload)
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "Error creando producto");
+      alert("✅ " + data.mensaje);
+      onCreado();
+    } catch (e) {
+      alert("Error: " + e.message);
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  const handleAsociar = async () => {
+    if (!productoExistente) { alert("Selecciona un producto del catálogo primero"); return; }
+    if (guardando) return;
+    setGuardando(true);
+    try {
+      const payload = {
+        productoId: productoExistente.id,
+        referenciaProveedor: refProv,
+        proveedorId: producto.apariciones[0]?.proveedorId,
+        precioFacturado: ultimoPrecio,
+        apariciones: producto.apariciones.map(a => ({
+          facturaId: a.facturaId,
+          lineaIdx: a.lineaIdx
+        }))
+      };
+      const r = await fetch(FAC_URL + "/asociar-producto-bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-admin-pin": pin },
+        body: JSON.stringify(payload)
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "Error asociando producto");
+      alert("✅ " + data.mensaje);
+      onCreado();
+    } catch (e) {
+      alert("Error: " + e.message);
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-stone-900/70" onClick={onCerrar} />
+      <div className="relative bg-white border-4 border-stone-900 w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-[8px_8px_0_0_rgba(0,0,0,1)]">
+        {/* Header */}
+        <div className="bg-blue-700 text-white border-b-4 border-stone-900 p-3 flex items-center justify-between">
+          <h3 className="font-black text-base" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+            🆕 AÑADIR AL CATÁLOGO
+          </h3>
+          <button onClick={onCerrar} disabled={guardando}
+            className="bg-white text-blue-700 font-black px-3 py-1 border-2 border-white hover:bg-blue-100 disabled:opacity-50">
+            ✕
+          </button>
+        </div>
+
+        <div className="p-4 space-y-4">
+          {/* Datos detectados de la factura */}
+          <div className="bg-blue-50 border-2 border-blue-400 p-3 text-xs space-y-1">
+            <div className="text-[10px] font-bold tracking-widest text-blue-900 mb-2">DATOS DETECTADOS EN FACTURA</div>
+            <div><b>Ref proveedor:</b> <span className="font-mono">{refProv || "—"}</span></div>
+            <div><b>Descripción facturada:</b> {producto.descFact}</div>
+            <div><b>Apariciones:</b> {producto.apariciones.length} factura{producto.apariciones.length === 1 ? "" : "s"} · {producto.cantTotal.toFixed(0)} {producto.unidad}</div>
+            <div><b>Último precio facturado:</b> €{ultimoPrecio.toFixed(4)}</div>
+          </div>
+
+          {/* Selector de modo */}
+          <div className="flex gap-2 border-b-2 border-stone-900">
+            <button
+              onClick={() => setModo("crear")}
+              className={`flex-1 px-3 py-2 text-xs font-black tracking-widest border-2 border-b-0 ${modo === "crear" ? "bg-blue-600 text-white border-blue-800" : "bg-stone-100 text-stone-600 border-stone-300 hover:bg-stone-200"}`}>
+              ✅ CREAR PRODUCTO NUEVO
+            </button>
+            <button
+              onClick={() => setModo("asociar")}
+              className={`flex-1 px-3 py-2 text-xs font-black tracking-widest border-2 border-b-0 ${modo === "asociar" ? "bg-violet-600 text-white border-violet-800" : "bg-stone-100 text-stone-600 border-stone-300 hover:bg-stone-200"}`}>
+              🔍 ASOCIAR A EXISTENTE
+            </button>
+          </div>
+
+          {modo === "crear" ? (
+            // ── MODO CREAR ───────────────────────────────────────
+            <div className="space-y-3">
+              <div className="text-[11px] text-stone-700 italic">
+                Crea este producto en tu catálogo. La descripción del proveedor suele ser críptica — edítala a algo legible (ej. "Codo 90° latón H 1/2"" en lugar de "CODO 90 LT H 12").
+              </div>
+              <div>
+                <label className="text-[10px] font-bold tracking-widest text-stone-700">DESCRIPCIÓN DEL PRODUCTO</label>
+                <input
+                  type="text"
+                  value={descripcion}
+                  onChange={(e) => setDescripcion(e.target.value)}
+                  placeholder="Ej: Codo 90° latón H 1/2&quot;"
+                  className="w-full border-2 border-stone-900 p-2 text-sm font-mono mt-1 focus:outline-none focus:bg-amber-50" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-bold tracking-widest text-stone-700">FAMILIA</label>
+                  <input
+                    type="text"
+                    value={familia}
+                    onChange={(e) => setFamilia(e.target.value)}
+                    list="familias-list"
+                    placeholder="Ej: Accesorios"
+                    className="w-full border-2 border-stone-900 p-2 text-sm mt-1 focus:outline-none focus:bg-amber-50" />
+                  <datalist id="familias-list">
+                    {familias.map(f => <option key={f} value={f} />)}
+                  </datalist>
+                  <div className="text-[9px] text-stone-500 mt-1">Escribe una nueva o elige existente</div>
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold tracking-widest text-stone-700">UNIDAD</label>
+                  <input
+                    type="text"
+                    value={unidad}
+                    onChange={(e) => setUnidad(e.target.value)}
+                    placeholder="uni / m / kg…"
+                    className="w-full border-2 border-stone-900 p-2 text-sm font-mono mt-1 focus:outline-none focus:bg-amber-50" />
+                </div>
+              </div>
+              <div className="bg-amber-50 border-2 border-amber-400 p-2 text-[10px] text-amber-900">
+                <b>Al crear el producto:</b> se guardará en el catálogo, se asociará a las {producto.apariciones.length} apariciones de esta referencia, y se aprenderá la equivalencia <code className="bg-amber-200 px-1">{refProv}</code> → este producto. Las próximas facturas con esa ref se matchearán automáticamente.
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button onClick={onCerrar} disabled={guardando}
+                  className="flex-1 bg-stone-200 text-stone-800 px-3 py-2 text-xs font-black tracking-widest border-2 border-stone-900 hover:bg-stone-300 disabled:opacity-50">
+                  CANCELAR
+                </button>
+                <button onClick={handleCrear} disabled={guardando || !descripcion.trim()}
+                  className="flex-[2] bg-blue-600 text-white px-3 py-2 text-xs font-black tracking-widest border-2 border-blue-800 hover:bg-blue-700 disabled:opacity-50">
+                  {guardando ? "⏳ CREANDO..." : "✅ CREAR Y ASOCIAR APARICIONES"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            // ── MODO ASOCIAR ────────────────────────────────────
+            <div className="space-y-3">
+              <div className="text-[11px] text-stone-700 italic">
+                Si este producto YA existe en tu catálogo (con otra descripción), búscalo y asócialo. Útil cuando la IA no encontró el match porque las descripciones son distintas.
+              </div>
+              <div>
+                <label className="text-[10px] font-bold tracking-widest text-stone-700">BUSCAR EN CATÁLOGO</label>
+                <input
+                  type="text"
+                  value={busquedaProd}
+                  onChange={(e) => { setBusquedaProd(e.target.value); setProductoExistente(null); }}
+                  placeholder="Busca por descripción, ref o ID…"
+                  autoFocus
+                  className="w-full border-2 border-stone-900 p-2 text-sm font-mono mt-1 focus:outline-none focus:bg-amber-50" />
+              </div>
+              {candidatosExistentes.length > 0 && (
+                <div className="border-2 border-stone-900 max-h-64 overflow-y-auto">
+                  {candidatosExistentes.map(p => (
+                    <div key={p.id}
+                      onClick={() => setProductoExistente(p)}
+                      className={`p-2 cursor-pointer border-b border-stone-200 hover:bg-violet-50 ${productoExistente?.id === p.id ? "bg-violet-100 ring-2 ring-violet-600" : ""}`}>
+                      <div className="font-bold text-sm">{p.desc}</div>
+                      <div className="text-[10px] text-stone-500 font-mono">
+                        {p.id} · {p.familia} · {p.unidad}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {productoExistente && (
+                <div className="bg-violet-50 border-2 border-violet-400 p-2 text-[10px] text-violet-900">
+                  <b>Asociarás esta referencia al producto:</b> "{productoExistente.desc}". Se actualizará el precio del proveedor en ese producto a €{ultimoPrecio.toFixed(4)}, y se aprenderá la equivalencia para futuras facturas.
+                </div>
+              )}
+              <div className="flex gap-2 pt-2">
+                <button onClick={onCerrar} disabled={guardando}
+                  className="flex-1 bg-stone-200 text-stone-800 px-3 py-2 text-xs font-black tracking-widest border-2 border-stone-900 hover:bg-stone-300 disabled:opacity-50">
+                  CANCELAR
+                </button>
+                <button onClick={handleAsociar} disabled={guardando || !productoExistente}
+                  className="flex-[2] bg-violet-600 text-white px-3 py-2 text-xs font-black tracking-widest border-2 border-violet-800 hover:bg-violet-700 disabled:opacity-50">
+                  {guardando ? "⏳ ASOCIANDO..." : "🔍 ASOCIAR A ESTE PRODUCTO"}
+                </button>
+              </div>
             </div>
           )}
         </div>
