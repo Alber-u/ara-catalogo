@@ -4222,7 +4222,11 @@ function ModalFusionarProductos({ par, proveedoresLista, onCerrar, onFusionado }
       if (provsGanador[pid]) {
         const datosG = provsGanador[pid];
         // Solo es conflicto si los datos son distintos
-        if (datosG.ref !== datosPerdedor.ref || datosG.bruto !== datosPerdedor.bruto) {
+        // Comparación tolerante: precios se consideran iguales si difieren en menos de 0.001 €
+        // (evita falsos conflictos por errores de redondeo de punto flotante)
+        const refDistinta = (datosG.ref || "") !== (datosPerdedor.ref || "");
+        const precioDistinto = Math.abs((datosG.bruto || 0) - (datosPerdedor.bruto || 0)) > 0.001;
+        if (refDistinta || precioDistinto) {
           conflictos.push({ proveedorId: pid, ganador: datosG, perdedor: datosPerdedor });
         }
       }
