@@ -3651,6 +3651,7 @@ function PestañaProductos({ data, api, reload }) {
   const [orden, setOrden] = useState("desc"); // desc | familia | precioAsc | precioDesc | recientes
   const [verDuplicados, setVerDuplicados] = useState(false);
   const [umbralDuplicados, setUmbralDuplicados] = useState("estricto"); // estricto (80%) | normal (60%) | permisivo (40%)
+  const [parFusion, setParFusion] = useState(null); // {a, b, score} cuando se está fusionando un par
 
   // Pares de duplicados descartados manualmente (persistente en localStorage)
   // Formato: Set de strings "idA__idB" (ordenado alfabéticamente para que sea consistente)
@@ -4118,9 +4119,14 @@ function PestañaProductos({ data, api, reload }) {
                           {motivo && (
                             <span className="text-rose-800 italic">— {motivo}</span>
                           )}
+                          <button onClick={() => setParFusion({ a, b, score, motivo })}
+                            title="Fusionar estos dos productos en uno"
+                            className="ml-auto text-[9px] font-bold bg-emerald-600 text-white px-2 py-1 border border-emerald-800 hover:bg-emerald-700">
+                            🔀 FUSIONAR
+                          </button>
                           <button onClick={() => handleDescartarPar(a.id, b.id)}
                             title="Marcar este par como NO duplicado para que no vuelva a aparecer"
-                            className="ml-auto text-[9px] font-bold bg-white text-stone-700 px-2 py-1 border border-stone-400 hover:bg-stone-100">
+                            className="text-[9px] font-bold bg-white text-stone-700 px-2 py-1 border border-stone-400 hover:bg-stone-100">
                             ✕ no es duplicado
                           </button>
                         </div>
@@ -4181,6 +4187,244 @@ function PestañaProductos({ data, api, reload }) {
           onCerrar={() => setModalImportar(false)}
         />
       )}
+      {parFusion && (
+        <ModalFusionarProductos
+          par={parFusion}
+          proveedoresLista={proveedoresLista}
+          onCerrar={() => setParFusion(null)}
+          onFusionado={() => { setParFusion(null); reload(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// =========================================================
+//  MODAL: Fusionar dos productos duplicados
+// =========================================================
+function ModalFusionarProductos({ par, proveedoresLista, onCerrar, onFusionado }) {
+  const { a, b, motivo } = par;
+  const [ganadorId, setGanadorId] = useState(a.id); // por defecto A es el ganador
+  const [conflictosResueltos, setConflictosResueltos] = useState({});
+  const [guardando, setGuardando] = useState(false);
+  const [error, setError] = useState(null);
+  const FAC_URL = "https://araujo-bot.onrender.com/api/facturas";
+
+  const ganador = ganadorId === a.id ? a : b;
+  const perdedor = ganadorId === a.id ? b : a;
+
+  // Detectar conflictos: proveedores que están en AMBOS productos con datos distintos
+  const conflictos = useMemo(() => {
+    const provsGanador = ganador.proveedores || {};
+    const provsPerdedor = perdedor.proveedores || {};
+    const conflictos = [];
+    for (const [pid, datosPerdedor] of Object.entries(provsPerdedor)) {
+      if (provsGanador[pid]) {
+        const datosG = provsGanador[pid];
+        // Solo es conflicto si los datos son distintos
+        if (datosG.ref !== datosPerdedor.ref || datosG.bruto !== datosPerdedor.bruto) {
+          conflictos.push({ proveedorId: pid, ganador: datosG, perdedor: datosPerdedor });
+        }
+      }
+    }
+    return conflictos;
+  }, [ganadorId, a.proveedores, b.proveedores]);
+
+  // Proveedores que se moverán (sin conflicto)
+  const proveedoresMovidos = useMemo(() => {
+    const provsGanador = ganador.proveedores || {};
+    const provsPerdedor = perdedor.proveedores || {};
+    return Object.keys(provsPerdedor).filter(pid => !provsGanador[pid]);
+  }, [ganadorId, a.proveedores, b.proveedores]);
+
+  // Falta resolver algún conflicto?
+  const conflictosPendientes = conflictos.filter(c => !conflictosResueltos[c.proveedorId]);
+
+  const nombreProv = (pid) => proveedoresLista.find(p => p.id === pid)?.nombre || pid;
+  const formatPrecio = (pv) => pv.bruto ? +(pv.bruto * (1 - (pv.dto || 0) / 100)).toFixed(4) : null;
+
+  const handleFusionar = async () => {
+    if (conflictosPendientes.length > 0) {
+      alert(`Resuelve los ${conflictosPendientes.length} conflicto${conflictosPendientes.length === 1 ? "" : "s"} antes de fusionar`);
+      return;
+    }
+    if (!confirm(`¿Fusionar "${perdedor.desc}" en "${ganador.desc}"?\n\nEl producto perdedor se BORRARÁ. Sus proveedores y referencias se moverán al ganador. Las equivalencias y líneas de factura se redirigirán.\n\nEsta acción no se puede deshacer.`)) return;
+
+    setGuardando(true);
+    setError(null);
+    try {
+      const r = await fetch(FAC_URL + "/fusionar-productos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-admin-pin": "1234" },
+        body: JSON.stringify({
+          ganadorId: ganador.id,
+          perdedorId: perdedor.id,
+          conflictosResueltos
+        })
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "Error en la fusión");
+      alert("✅ " + data.mensaje);
+      onFusionado();
+    } catch (e) {
+      setError(e.message);
+      setGuardando(false);
+    }
+  };
+
+  // Renderiza un producto con sus proveedores (compacto)
+  const renderProducto = (p, esGanador) => (
+    <div className={`border-2 p-3 ${esGanador ? "border-emerald-700 bg-emerald-50" : "border-stone-400 bg-stone-50 opacity-70"}`}>
+      <div className="flex items-start justify-between gap-2 mb-2">
+        <div className="flex-1 min-w-0">
+          <div className="text-[9px] font-bold tracking-widest text-stone-500">{p.familia || "Sin familia"}</div>
+          <div className="font-bold text-sm">{p.desc}</div>
+          <div className="text-[9px] text-stone-500 font-mono">id: {p.id}</div>
+        </div>
+        {esGanador ? (
+          <span className="text-[9px] font-bold bg-emerald-700 text-white px-2 py-0.5 whitespace-nowrap">✓ GANADOR</span>
+        ) : (
+          <span className="text-[9px] font-bold bg-stone-500 text-white px-2 py-0.5 whitespace-nowrap">✕ SE BORRA</span>
+        )}
+      </div>
+      <div className="space-y-0.5">
+        {Object.entries(p.proveedores || {}).map(([pid, pv]) => {
+          const precio = formatPrecio(pv);
+          return (
+            <div key={pid} className="text-[10px] font-mono bg-white border border-stone-300 px-2 py-1 flex items-center gap-2">
+              <span className="font-bold text-violet-700">{nombreProv(pid)}</span>
+              <span className="text-stone-500">ref</span>
+              <span>{pv.ref || "—"}</span>
+              {precio && <span className="ml-auto font-bold">€{precio}</span>}
+            </div>
+          );
+        })}
+        {Object.keys(p.proveedores || {}).length === 0 && (
+          <div className="text-[10px] italic text-stone-400">Sin proveedores</div>
+        )}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-stone-900/70" onClick={onCerrar} />
+      <div className="relative bg-white border-4 border-stone-900 w-full max-w-3xl max-h-[95vh] overflow-y-auto shadow-[8px_8px_0_0_rgba(0,0,0,1)]">
+        {/* Header */}
+        <div className="bg-emerald-700 text-white border-b-4 border-stone-900 p-3 flex items-center justify-between sticky top-0 z-10">
+          <h3 className="font-black text-base" style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
+            🔀 FUSIONAR PRODUCTOS DUPLICADOS
+          </h3>
+          <button onClick={onCerrar} disabled={guardando}
+            className="bg-white text-emerald-700 font-black px-3 py-1 border-2 border-white hover:bg-emerald-100 disabled:opacity-50">
+            ✕
+          </button>
+        </div>
+
+        <div className="p-4 space-y-4">
+          {/* Aviso */}
+          <div className="bg-amber-50 border-2 border-amber-400 p-3 text-[11px] text-amber-900">
+            <b>⚠️ Acción irreversible:</b> el producto perdedor se borrará del catálogo. Sus proveedores se moverán al ganador. Las equivalencias aprendidas y las líneas de facturas que apuntaban al perdedor se redirigirán al ganador automáticamente.
+            {motivo && <div className="mt-1"><b>Motivo de detección:</b> {motivo}</div>}
+          </div>
+
+          {/* Selector de ganador */}
+          <div>
+            <div className="text-[10px] font-bold tracking-widest text-stone-700 mb-2">¿CUÁL ES EL GANADOR? (el que se queda)</div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setGanadorId(a.id)}
+                disabled={guardando}
+                className={`flex-1 px-3 py-2 text-xs font-black tracking-widest border-2 ${ganadorId === a.id ? "bg-emerald-600 text-white border-emerald-800" : "bg-stone-100 text-stone-600 border-stone-300 hover:bg-stone-200"}`}>
+                A: {a.desc.substring(0, 35)}{a.desc.length > 35 ? "…" : ""}
+              </button>
+              <button
+                onClick={() => setGanadorId(b.id)}
+                disabled={guardando}
+                className={`flex-1 px-3 py-2 text-xs font-black tracking-widest border-2 ${ganadorId === b.id ? "bg-emerald-600 text-white border-emerald-800" : "bg-stone-100 text-stone-600 border-stone-300 hover:bg-stone-200"}`}>
+                B: {b.desc.substring(0, 35)}{b.desc.length > 35 ? "…" : ""}
+              </button>
+            </div>
+          </div>
+
+          {/* Vista lado a lado */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {renderProducto(ganador, true)}
+            {renderProducto(perdedor, false)}
+          </div>
+
+          {/* Resolución de conflictos */}
+          {conflictos.length > 0 && (
+            <div className="border-2 border-orange-700 bg-orange-50 p-3">
+              <div className="text-[11px] font-bold text-orange-900 mb-2">
+                ⚠️ CONFLICTOS DE PROVEEDOR ({conflictos.length})
+              </div>
+              <div className="text-[10px] text-orange-800 italic mb-3">
+                Los dos productos tienen estos proveedores con datos distintos. Elige cuál se queda.
+              </div>
+              <div className="space-y-2">
+                {conflictos.map(c => (
+                  <div key={c.proveedorId} className="bg-white border border-orange-400 p-2 text-[11px]">
+                    <div className="font-bold text-orange-900 mb-1">📦 {nombreProv(c.proveedorId)}</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={() => setConflictosResueltos({...conflictosResueltos, [c.proveedorId]: "ganador"})}
+                        disabled={guardando}
+                        className={`text-left p-2 border-2 ${conflictosResueltos[c.proveedorId] === "ganador" ? "border-emerald-700 bg-emerald-100" : "border-stone-300 bg-stone-50 hover:bg-stone-100"}`}>
+                        <div className="text-[9px] font-bold text-stone-500">DATOS GANADOR</div>
+                        <div className="font-mono">ref: {c.ganador.ref || "—"}</div>
+                        <div className="font-mono">€{formatPrecio(c.ganador) ?? "—"}</div>
+                      </button>
+                      <button
+                        onClick={() => setConflictosResueltos({...conflictosResueltos, [c.proveedorId]: "perdedor"})}
+                        disabled={guardando}
+                        className={`text-left p-2 border-2 ${conflictosResueltos[c.proveedorId] === "perdedor" ? "border-emerald-700 bg-emerald-100" : "border-stone-300 bg-stone-50 hover:bg-stone-100"}`}>
+                        <div className="text-[9px] font-bold text-stone-500">DATOS PERDEDOR</div>
+                        <div className="font-mono">ref: {c.perdedor.ref || "—"}</div>
+                        <div className="font-mono">€{formatPrecio(c.perdedor) ?? "—"}</div>
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Resumen */}
+          <div className="bg-stone-50 border-2 border-stone-700 p-3 text-[11px]">
+            <div className="font-bold text-stone-800 mb-1">RESUMEN DE LA FUSIÓN</div>
+            <ul className="space-y-1 text-stone-700">
+              <li>• Se quedará: <b>{ganador.desc}</b></li>
+              <li>• Se borrará: <b>{perdedor.desc}</b></li>
+              {proveedoresMovidos.length > 0 && (
+                <li>• Proveedores que se moverán al ganador: <b>{proveedoresMovidos.map(nombreProv).join(", ")}</b></li>
+              )}
+              {conflictos.length > 0 && (
+                <li>• Conflictos: <b>{conflictos.length} ({conflictosPendientes.length} sin resolver)</b></li>
+              )}
+              <li className="text-stone-500 italic">• Las equivalencias y líneas de facturas que apuntan al perdedor se redirigirán automáticamente.</li>
+            </ul>
+          </div>
+
+          {error && (
+            <div className="bg-red-100 border-2 border-red-700 p-2 text-[11px] text-red-900">
+              ❌ Error: {error}
+            </div>
+          )}
+
+          {/* Acciones */}
+          <div className="flex gap-2 pt-2">
+            <button onClick={onCerrar} disabled={guardando}
+              className="flex-1 bg-stone-200 text-stone-800 px-3 py-2 text-xs font-black tracking-widest border-2 border-stone-900 hover:bg-stone-300 disabled:opacity-50">
+              CANCELAR
+            </button>
+            <button onClick={handleFusionar} disabled={guardando || conflictosPendientes.length > 0}
+              className="flex-[2] bg-emerald-600 text-white px-3 py-2 text-xs font-black tracking-widest border-2 border-emerald-800 hover:bg-emerald-700 disabled:opacity-50">
+              {guardando ? "⏳ FUSIONANDO..." : conflictosPendientes.length > 0 ? `⚠ RESUELVE ${conflictosPendientes.length} CONFLICTO${conflictosPendientes.length === 1 ? "" : "S"}` : "🔀 FUSIONAR DEFINITIVAMENTE"}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
