@@ -3409,12 +3409,18 @@ function PanelAdmin({ pin, onSalir }) {
   const [pestaña, setPestaña] = useState("resumen");
   const [recargando, setRecargando] = useState(false);
 
-  // Carga TODA la BBDD admin
+  // Carga TODA la BBDD admin + refresca el CATALOGO global
   const recargarTodo = async () => {
     setRecargando(true);
     try {
       const all = await api.get("/admin/all");
       setData(all);
+      // Refrescar también la variable CATALOGO global (la usa el resto de la app:
+      // modal de creación, detector de duplicados, modal de fusión, etc.)
+      // Usamos los productos del admin que acabamos de cargar.
+      if (Array.isArray(all?.productos)) {
+        CATALOGO = all.productos;
+      }
     } catch (e) {
       console.error(e);
     } finally {
