@@ -5831,10 +5831,34 @@ function PestañaFacturas({ api, pin }) {
 
       {/* Buscador y filtros */}
       {facturas.length > 0 && (() => {
-        // Lista de proveedores únicos (de las facturas ya extraídas)
-        const provs = Array.from(new Set(
-          facturas.map(f => f.datosExtraidos?.proveedor).filter(Boolean)
-        )).sort((a, b) => a.localeCompare(b));
+        // Helper: normaliza el nombre de proveedor para deduplicar variantes
+        // (mayúsculas/minúsculas, tildes, comas, puntos, espacios extra)
+        const normalizarProv = (s) => (s || "")
+          .toLowerCase()
+          .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // quita tildes
+          .replace(/[.,]/g, "") // quita puntos y comas
+          .replace(/\s+/g, " ") // espacios múltiples a uno
+          .trim();
+
+        // Lista de proveedores únicos DEDUPLICADA por nombre normalizado.
+        // Para cada grupo de variantes, nos quedamos con el nombre que aparece más veces
+        // (o el primero alfabéticamente si hay empate) — así el selector muestra UN nombre
+        // representativo y no las variantes que la IA extrae con diferencias menores.
+        const provsRaw = facturas.map(f => f.datosExtraidos?.proveedor).filter(Boolean);
+        const grupos = {};
+        provsRaw.forEach(nombre => {
+          const norm = normalizarProv(nombre);
+          if (!norm) return;
+          if (!grupos[norm]) grupos[norm] = {};
+          grupos[norm][nombre] = (grupos[norm][nombre] || 0) + 1;
+        });
+        // Para cada grupo, elegir el nombre representativo (más frecuente)
+        const provs = Object.keys(grupos).map(norm => {
+          const variantes = grupos[norm];
+          // Ordenamos por frecuencia descendente, luego alfabéticamente
+          const ordenadas = Object.entries(variantes).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+          return { norm, label: ordenadas[0][0] };
+        }).sort((a, b) => a.label.localeCompare(b.label));
         return (
           <div className="bg-white border-2 border-stone-900 p-3 space-y-2">
             <div className="text-[10px] tracking-widest font-bold text-stone-700">BUSCADOR</div>
@@ -5850,7 +5874,7 @@ function PestañaFacturas({ api, pin }) {
                 onChange={(e) => setFiltroProveedor(e.target.value)}
                 className="border-2 border-stone-900 p-2 text-xs font-mono bg-white focus:outline-none">
                 <option value="todos">Todos los proveedores</option>
-                {provs.map(p => <option key={p} value={p}>{p}</option>)}
+                {provs.map(p => <option key={p.norm} value={p.norm}>{p.label}</option>)}
               </select>
               <select
                 value={filtroEstado}
@@ -5881,7 +5905,9 @@ function PestañaFacturas({ api, pin }) {
           const q = busqueda.toLowerCase().trim();
           const facturasFiltradas = facturas.filter(f => {
             if (filtroEstado !== "todos" && f.estado !== filtroEstado) return false;
-            if (filtroProveedor !== "todos" && f.datosExtraidos?.proveedor !== filtroProveedor) return false;
+            // El filtro de proveedor compara por nombre NORMALIZADO (sin tildes, mayúsculas, etc.)
+            // así matchea aunque la IA haya extraído variantes ligeramente distintas.
+            if (filtroProveedor !== "todos" && normalizarProv(f.datosExtraidos?.proveedor) !== filtroProveedor) return false;
             if (q) {
               const enNombre = (f.archivoOriginal || "").toLowerCase().includes(q);
               const enProv = (f.datosExtraidos?.proveedor || "").toLowerCase().includes(q);
