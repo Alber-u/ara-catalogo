@@ -1479,8 +1479,26 @@ const detectarTipoPieza = (texto) => {
 // Usa el campo `img` del producto si existe; si no, deriva uno automáticamente del tipo de pieza
 // detectado en la descripción + pistas de material (multicapa, cobre, PVC, PE...).
 // Esto permite que productos creados sin asignar `img` tengan un SVG decente automáticamente.
+// Detecta el tipo visual de un producto. Si no hay foto del material exacto,
+// devolvemos un tipo que SVG sí dibuja (con el color del material correcto)
+// para que NO salga una foto de otro material por error.
 const imgTypeFromProducto = (p) => {
-  if (p?.img) return p.img;
+  // ESTRATEGIA:
+  // 1. Calcular qué tipo nos saldría por detección automática (mira material en desc + familia)
+  // 2. Si la detección saca algo distinto al `img` guardado, preferir la detección,
+  //    PORQUE el `img` guardado puede ser un valor antiguo genérico ("codo") cuando
+  //    en realidad es un "Codo cobre" o "Codo PVC".
+  // 3. Si la detección no saca nada útil ("default"), entonces usar el `img` guardado como fallback.
+  const imgGuardado = p?.img;
+  const detectado = detectarImg(p);
+  if (detectado && detectado !== "default") return detectado;
+  if (imgGuardado) return imgGuardado;
+  return "default";
+};
+
+// Detección pura desde la descripción + familia
+// (separada del helper anterior para que la lógica quede limpia)
+const detectarImg = (p) => {
   const desc = (p?.desc || "").toLowerCase();
   const fam = (p?.familia || "").toLowerCase();
   const tipo = detectarTipoPieza(p?.desc || "");
@@ -1524,7 +1542,7 @@ const imgTypeFromProducto = (p) => {
 
   // Aislamientos
   if (tipo === "aislamiento" || /coquilla|aisl|armaflex/i.test(desc)) {
-    if (/abierta|ad\u00f1esiva|adhesiva|cerrada autoadhe/i.test(desc)) return "coquilla-abierta";
+    if (/abierta|adhesiva|cerrada autoadhe/i.test(desc)) return "coquilla-abierta";
     return "aislamiento";
   }
 
@@ -1536,50 +1554,79 @@ const imgTypeFromProducto = (p) => {
   if (/adhesivo.*pvc|tangit\s+pvc|pegamento.*pvc/i.test(desc)) return "adhesivo-pvc";
 
   // Pistas de material en la descripción / familia
+  // (orden importa: más específico primero)
   const esPVC = /pvc|evac/i.test(desc) || fam.includes("pvc");
-  const esElectro = /electrofu|electrof/i.test(desc) || fam.includes("electrofusi");
+  const esElectro = /electrofu|electrof|inyect/i.test(desc) || fam.includes("electrofusi");
   const esCobre = /cobre|cu\b/i.test(desc) || fam.includes("cobre");
-  const esMcap = /multicapa|pex|al\/pe/i.test(desc) || fam.includes("multicapa");
   const esGalv = /galvani|galv\b/i.test(desc) || fam.includes("galvani");
-  const esPECompres = /(pe\s*100|polietilen)/i.test(desc) && /(compresi|compresion)/i.test(desc);
-  const esPEAzul = /pe\s*compresi|polietileno.*compresi|pe\s*az/i.test(desc);
+  // Multicapa: o lo dice en la descripción, o está en familia "Multicapa"
+  const esMcap = /multicapa|pex|al\/pe|pert/i.test(desc) || fam === "multicapa";
+  // PE compresión: familia "Fittings PE" o palabras clave
+  const esPECompres = fam === "fittings pe" || /fitting\s*pe|pe\s*compres|polietileno.*compres/i.test(desc);
 
-  // Casos especiales por tipo (con material)
+  // === TUBOS ===
   if (tipo === "tuberia" || tipo === "tubo") {
-    if (esElectro) return "tubo-pe";
-    if (esPVC) return "tubo-pvc";
-    if (esCobre) return "cobre";
-    if (esMcap) return "tubo-pex";
+    if (esElectro) return "tubo-pe";   // SVG (no tengo foto)
+    if (esCobre) return "cobre";        // SVG cobre con color naranja
+    if (esMcap) return "tubo-pex";      // SÍ hay foto
+    if (esPVC) return "tubo-pvc";       // SÍ hay foto
     return "tubo-pvc";
   }
+
+  // === CODOS ===
+  if (tipo === "codo") {
+    if (esElectro) return "electro";        // SÍ hay foto
+    if (esCobre) return "codo";             // SVG (con color cobre por contexto) — no hay foto
+    if (esGalv) return "galv-codo";         // SÍ hay foto
+    if (esPECompres) return "pe-codo";      // SÍ hay foto azul
+    if (esPVC) return "codo-pvc";           // SÍ hay foto
+    if (esMcap) return "codo";              // SÍ hay foto multicapa press
+    return "codo";                          // genérico (foto multicapa press)
+  }
+
+  // === TES ===
   if (tipo === "te") {
-    if (esPVC) return "te-pvc";
-    if (esElectro) return "elec-te";
-    if (esGalv) return "galv-te";
-    if (esPECompres || esPEAzul) return "pe-te";
+    if (esElectro) return "elec-te";        // SÍ hay foto
+    if (esCobre) return "te";               // SVG — no hay foto
+    if (esGalv) return "galv-te";           // SÍ hay foto
+    if (esPECompres) return "pe-te";        // SÍ hay foto azul
+    if (esPVC) return "te-pvc";             // SÍ hay foto
+    if (esMcap) return "te";                // SÍ hay foto multicapa press
     return "te";
   }
-  if (tipo === "codo") {
-    if (esPVC) return "codo-pvc";
-    if (esElectro) return "electro";
-    if (esGalv) return "galv-codo";
-    if (esPECompres || esPEAzul) return "pe-codo";
-    return "codo";
-  }
-  if (tipo === "reduccion") return esPVC ? "reduc-pvc" : "reduccion";
+
+  // === MANGUITOS ===
   if (tipo === "manguito") {
-    if (esPVC) return "pvc-manguito";
-    if (esGalv) return "galv-manguito";
-    if (esPECompres || esPEAzul) return "pe-manguito";
-    return "manguito";
+    if (esElectro) return "manguito";       // SVG — no hay foto electrofusión
+    if (esCobre) return "manguito";         // SVG — no hay foto
+    if (esGalv) return "galv-manguito";     // SÍ hay foto
+    if (esPECompres) return "pe-manguito";  // SÍ hay foto azul
+    if (esPVC) return "pvc-manguito";       // SÍ hay foto
+    if (esMcap) return "manguito";          // SÍ hay foto multicapa press
+    return "manguito-laton";                // foto manguito latón si nada match
   }
+
+  // === MACHONES ===
   if (tipo === "machon") {
-    if (esGalv) return "galv-machon";
-    return "machon";
+    if (esGalv) return "galv-machon";       // SÍ hay foto
+    return "machon";                         // foto machón latón
   }
+
+  // === REDUCCIONES ===
+  if (tipo === "reduccion") {
+    if (esPVC) return "reduc-pvc";          // SVG (no tengo foto reducción PVC)
+    return "reduccion";                      // SÍ hay foto reducción latón
+  }
+
+  // === VÁLVULAS (genéricas si no se detectó subtipo arriba) ===
   if (tipo === "valvula") {
-    if (esPECompres || esPEAzul) return "pe-valvula";
-    return "valvula";
+    if (esPECompres) return "pe-valvula";   // SÍ hay foto azul
+    return "valvula";                        // foto válvula bola latón
+  }
+
+  // === RACORES ===
+  if (tipo === "racor") {
+    return "racor";                          // foto racor multicapa press
   }
 
   // Tipos directos (mismo nombre que el case del switch)
@@ -5849,12 +5896,13 @@ function ModalImportarProductos({ productosActuales, api, reload, onCerrar }) {
 
 // Modal para crear/editar/validar producto
 function ModalEditarProducto({ producto, api, reload, onCerrar, plantillaInicial, esValidacion }) {
-  const inicial = producto || plantillaInicial || { desc: "", familia: "Varios", unidad: "uni", img: "tapon" };
+  const inicial = producto || plantillaInicial || { desc: "", familia: "Varios", unidad: "uni", img: "" };
   const [desc, setDesc] = useState(inicial.desc || "");
   const [nombreCorto, setNombreCorto] = useState(inicial.nombreCorto || "");
   const [familia, setFamilia] = useState(inicial.familia || "Varios");
   const [unidad, setUnidad] = useState(inicial.unidad || "uni");
-  const [img, setImg] = useState(inicial.img || "tapon");
+  // Si img es "" se hace auto-detección por helper imgTypeFromProducto
+  const [img, setImg] = useState(inicial.img || "");
   const [cantPorUnidad, setCantPorUnidad] = useState(inicial.cantidadPorUnidad || "");
   const [guardando, setGuardando] = useState(false);
 
@@ -5881,7 +5929,7 @@ function ModalEditarProducto({ producto, api, reload, onCerrar, plantillaInicial
           proveedores[prov.id] = { ref: d.ref, bruto: parseFloat(d.bruto), dto: parseFloat(d.dto) || 0, marca: d.marca || "—" };
         }
       });
-      const body = { desc, nombreCorto: nombreCorto.trim() || null, familia, unidad, img, proveedores, cantidadPorUnidad: cantPorUnidad ? parseFloat(cantPorUnidad) : null };
+      const body = { desc, nombreCorto: nombreCorto.trim() || null, familia, unidad, img: img || null, proveedores, cantidadPorUnidad: cantPorUnidad ? parseFloat(cantPorUnidad) : null };
       if (esValidacion) {
         await api.post("/admin/pendiente/" + esValidacion.id + "/validar", body);
       } else if (producto) {
@@ -5951,13 +5999,129 @@ function ModalEditarProducto({ producto, api, reload, onCerrar, plantillaInicial
               </select>
             </div>
             <div>
-              <label className="text-[10px] tracking-widest font-bold text-stone-700 mb-1 block">IMAGEN</label>
-              <select value={img} onChange={(e) => setImg(e.target.value)}
-                      className="w-full border-2 border-stone-900 p-2 text-xs focus:bg-amber-50 focus:outline-none font-mono">
-                {["valvula","fitting","te","codo","machon","tapon","reduccion","filtro","tubo-pex","tubo-pe","tubo-pvc","te-pvc","codo-pvc","reduc-pvc","electro","cobre","mcap","bateria","latiguillo","aislamiento","abrazadera"].map(t => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
-              </select>
+              <label className="text-[10px] tracking-widest font-bold text-stone-700 mb-1 block">
+                IMAGEN <span className="font-normal opacity-60">(elige la foto que mejor representa el producto)</span>
+              </label>
+              <div className="flex items-stretch gap-2">
+                <select value={img} onChange={(e) => setImg(e.target.value)}
+                        className="flex-1 border-2 border-stone-900 p-2 text-xs focus:bg-amber-50 focus:outline-none font-mono">
+                  <optgroup label="— AUTOMÁTICO —">
+                    <option value="">(detectar automáticamente)</option>
+                  </optgroup>
+                  <optgroup label="Genéricos">
+                    <option value="codo">codo (multicapa press)</option>
+                    <option value="te">te (multicapa press)</option>
+                    <option value="manguito">manguito (multicapa press)</option>
+                    <option value="machon">machón latón</option>
+                    <option value="machon-mm-laton">machón M-M latón largo</option>
+                    <option value="manguito-laton">manguito latón</option>
+                    <option value="reduccion">reducción latón</option>
+                    <option value="tapon">tapón hexagonal</option>
+                    <option value="filtro">filtro Y</option>
+                    <option value="racor">racor unión multicapa</option>
+                    <option value="bateria">batería 4 vías</option>
+                  </optgroup>
+                  <optgroup label="Válvulas y grifos">
+                    <option value="valvula">válvula bola PN16</option>
+                    <option value="valvula-bola-pn25">válvula bola PN25</option>
+                    <option value="valvula-compuerta">válvula compuerta (volante)</option>
+                    <option value="valvula-retencion">válvula retención</option>
+                    <option value="valvula-reductora">válvula reductora presión</option>
+                    <option value="valvula-empotrar">válvula empotrar (escuadra)</option>
+                    <option value="valvula-lavabo">válvula lavabo</option>
+                    <option value="purgador">purgador automático aire</option>
+                    <option value="grifo-jardin">grifo jardín</option>
+                  </optgroup>
+                  <optgroup label="PVC sanitario">
+                    <option value="codo-pvc">codo PVC</option>
+                    <option value="te-pvc">te PVC</option>
+                    <option value="deriv-pvc">derivación PVC 45°</option>
+                    <option value="pvc-manguito">manguito PVC</option>
+                    <option value="reduc-pvc">reducción PVC (SVG)</option>
+                    <option value="tubo-pvc">tubo PVC</option>
+                  </optgroup>
+                  <optgroup label="Cobre / Multicapa / Tubos">
+                    <option value="cobre">tubo cobre</option>
+                    <option value="mcap">tubo multicapa (tramo)</option>
+                    <option value="tubo-pex">rollo multicapa</option>
+                    <option value="tubo-pe">tubo PE100 (SVG)</option>
+                  </optgroup>
+                  <optgroup label="PE compresión (azul)">
+                    <option value="pe-codo">codo PE compresión</option>
+                    <option value="pe-te">te PE compresión</option>
+                    <option value="pe-manguito">manguito PE compresión</option>
+                    <option value="pe-collar">collarín toma PE</option>
+                    <option value="pe-valvula">válvula bola PE</option>
+                  </optgroup>
+                  <optgroup label="Electrofusión PE100">
+                    <option value="electro">codo electrofusión PE100</option>
+                    <option value="elec-te">te electrofusión PE100</option>
+                  </optgroup>
+                  <optgroup label="Galvanizado">
+                    <option value="galv-codo">codo galvanizado</option>
+                    <option value="galv-te">te galvanizado</option>
+                    <option value="galv-machon">machón galvanizado</option>
+                    <option value="galv-manguito">manguito galvanizado</option>
+                  </optgroup>
+                  <optgroup label="Multicapa transiciones">
+                    <option value="mc-macho">multicapa macho latón</option>
+                    <option value="mc-hembra">multicapa hembra latón</option>
+                  </optgroup>
+                  <optgroup label="Latiguillos">
+                    <option value="latiguillo-corto">latiguillo corto</option>
+                    <option value="latiguillo-largo">latiguillo largo (rollo)</option>
+                    <option value="latiguillo-flex">latiguillo flexible ondulado</option>
+                  </optgroup>
+                  <optgroup label="Desagües">
+                    <option value="sifon">sifón botella</option>
+                    <option value="valvula-lavabo">válvula desagüe lavabo</option>
+                    <option value="sumidero">sumidero ducha</option>
+                  </optgroup>
+                  <optgroup label="Soportación">
+                    <option value="abrazadera">abrazadera</option>
+                    <option value="abrazadera-goma">abrazadera con goma</option>
+                    <option value="abrazadera-varilla">abrazadera varilla</option>
+                    <option value="abrazadera-doble">abrazadera doble</option>
+                    <option value="abrazadera-u">abrazadera U / omega</option>
+                    <option value="abrazadera-goma-varilla">abrazadera goma+varilla</option>
+                    <option value="grapa-silla">grapa silla</option>
+                    <option value="perfil-c">perfil C / Strut</option>
+                  </optgroup>
+                  <optgroup label="Aislamientos y consumibles">
+                    <option value="aislamiento">coquilla cerrada</option>
+                    <option value="coquilla-abierta">coquilla adhesiva (abierta)</option>
+                    <option value="cinta-aislante">cinta aislante</option>
+                    <option value="cinta-teflon">cinta teflón</option>
+                    <option value="hilo-lino">hilo lino sellador</option>
+                    <option value="silicona">silicona</option>
+                    <option value="adhesivo-pvc">adhesivo PVC</option>
+                  </optgroup>
+                </select>
+                {/* Vista previa de la imagen seleccionada.
+                    Si img está vacío (modo auto-detección), mostramos lo que SALDRÍA al guardar
+                    según la descripción y familia actuales del formulario. Así el admin ve antes
+                    de guardar cómo le va a quedar. */}
+                <div className="w-16 h-16 border-2 border-stone-900 bg-white flex items-center justify-center shrink-0 relative">
+                  <ProductSVG type={img || imgTypeFromProducto({ desc, familia, img: "" })} />
+                  {!img && (
+                    <span className="absolute -bottom-1 -right-1 bg-amber-400 border border-stone-900 text-[7px] font-black px-1 leading-tight">AUTO</span>
+                  )}
+                </div>
+              </div>
+              {/* Explicación + botón limpiar */}
+              <div className="mt-1.5 flex items-center justify-between text-[10px] text-stone-600">
+                <span>
+                  {img
+                    ? <>📌 <b>Foto fija</b> seleccionada manualmente</>
+                    : <>🤖 <b>Auto:</b> detectaré la imagen desde la descripción "{(desc || "").slice(0, 40)}{desc.length > 40 ? "…" : ""}"</>}
+                </span>
+                {img && (
+                  <button type="button" onClick={() => setImg("")}
+                          className="text-violet-700 hover:underline font-bold ml-2 shrink-0">
+                    Volver a auto
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 
