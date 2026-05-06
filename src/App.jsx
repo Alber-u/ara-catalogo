@@ -1417,7 +1417,65 @@ const extraerMedida = (texto) => {
   return { tipo: "otro", valor: 0 };
 };
 
-// Compara dos productos por familia → tipo (mm primero, pulgadas después, otros al final) → valor → desc
+// Detecta el tipo de pieza al inicio del nombre (codo, te, machón, fitting, válvula, etc.)
+// Devuelve un canonical lowercase para agrupar variantes ortográficas (ó/o, í/i…).
+// Si no encuentra tipo conocido, devuelve "zzz_<primera-palabra>" para que vayan al final.
+const detectarTipoPieza = (texto) => {
+  if (!texto) return "zzz_otro";
+  const lower = texto.toLowerCase().trim();
+
+  // Abreviaturas frecuentes en facturas (BAT/BTS = batería, etc.)
+  // Estas se prueban primero porque suelen ir al inicio.
+  const abreviaturas = [
+    { canonical: "bateria",  regex: /\b(?:BAT|BTS)\b/i },
+  ];
+  for (const t of abreviaturas) {
+    if (t.regex.test(lower)) return t.canonical;
+  }
+
+  // Tipos en orden de PRIORIDAD (más específico primero, más genérico después).
+  // Orden importa: "Fitting latón codo" debe matchear como "fitting" no como "codo".
+  const tipos = [
+    { canonical: "fitting",     regex: /\bfitting\b/i },
+    { canonical: "valvula",     regex: /\bv[áa]lvula\b/i },
+    { canonical: "machon",      regex: /\bmach[óo]n\b/i },
+    { canonical: "manguito",    regex: /\bmanguito\b/i },
+    { canonical: "racor",       regex: /\bracor\b/i },
+    { canonical: "filtro",      regex: /\bfiltro\b/i },
+    { canonical: "tuberia",     regex: /\btub(?:er[íi]a|o)\b/i },
+    { canonical: "reduccion",   regex: /\breducci[óo]n\b/i },
+    { canonical: "tapon",       regex: /\btap[óo]n\b/i },
+    { canonical: "enlace",      regex: /\benlace\b/i },
+    { canonical: "tuerca",      regex: /\btuerca\b/i },
+    { canonical: "junta",       regex: /\bjunta\b/i },
+    { canonical: "soporte",     regex: /\bsoporte\b/i },
+    { canonical: "abrazadera",  regex: /\babrazadera\b/i },
+    { canonical: "bateria",     regex: /\bbater[íi]a\b/i },
+    { canonical: "grifo",       regex: /\bgrifo\b/i },
+    { canonical: "lija",        regex: /\blija\b/i },
+    { canonical: "tornillo",    regex: /\btornillo\b/i },
+    { canonical: "espuma",      regex: /\bespuma\b/i },
+    { canonical: "sellador",    regex: /\bsellador\b/i },
+    { canonical: "cinta",       regex: /\bcinta\b/i },
+    { canonical: "brida",       regex: /\bbrida\b/i },
+    { canonical: "tenaza",      regex: /\btenaza\b/i },
+    { canonical: "hilo",        regex: /\bhilo\b/i },
+    { canonical: "conex",       regex: /\bconex\b/i },
+    // Genéricos al final
+    { canonical: "codo",        regex: /\bcodo\b/i },
+    { canonical: "te",          regex: /(?:^|\s)t[ée]\b/i },
+  ];
+
+  for (const t of tipos) {
+    if (t.regex.test(lower)) return t.canonical;
+  }
+
+  // Si nada coincide, usar la primera palabra (sin prefijos cortos como "LT", "PVC")
+  const primera = lower.replace(/^[a-z]{1,4}\s+/i, "").split(/\s+/)[0];
+  return "zzz_" + (primera || "otro");
+};
+
+// Compara dos productos por: familia → tipo de pieza → unidad (mm primero, pulgadas después) → valor numérico → desc
 const compararPorTamaño = (a, b) => {
   // 1. Familia alfabética
   const fa = a.familia || "zzz";
@@ -1425,16 +1483,22 @@ const compararPorTamaño = (a, b) => {
   const cmpFam = fa.localeCompare(fb);
   if (cmpFam !== 0) return cmpFam;
 
-  // 2. Tipo: mm < pulgadas < otro
+  // 2. Tipo de pieza (machón, codo, te, etc.) — agrupa visualmente los del mismo tipo
+  const ta = detectarTipoPieza(a.desc);
+  const tb = detectarTipoPieza(b.desc);
+  const cmpTipo = ta.localeCompare(tb);
+  if (cmpTipo !== 0) return cmpTipo;
+
+  // 3. Tipo de unidad: mm < pulgadas < otro
   const ma = extraerMedida(a.desc);
   const mb = extraerMedida(b.desc);
   const tipoOrden = { mm: 0, pulgadas: 1, otro: 2 };
   if (tipoOrden[ma.tipo] !== tipoOrden[mb.tipo]) return tipoOrden[ma.tipo] - tipoOrden[mb.tipo];
 
-  // 3. Valor numérico ascendente
+  // 4. Valor numérico ascendente
   if (ma.valor !== mb.valor) return ma.valor - mb.valor;
 
-  // 4. Desempate alfabético
+  // 5. Desempate alfabético
   return (a.desc || "").localeCompare(b.desc || "");
 };
 
