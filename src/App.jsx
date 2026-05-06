@@ -4113,6 +4113,11 @@ function PestañaProductos({ data, api, reload }) {
                   const colorScore = esRefIdentica ? "bg-stone-900" : pctScore >= 90 ? "bg-red-700" : pctScore >= 75 ? "bg-orange-600" : "bg-amber-600";
                   const labelScore = esRefIdentica ? "DUPLICADO SEGURO" : `${pctScore}% similar`;
                   const claveK = a.id + "__" + b.id;
+                  // FIX clave: como un producto puede estar en múltiples pares (3+ duplicados),
+                  // las keys de las filas tienen que ser únicas POR PAR, no solo por producto.
+                  // Sin esto React colapsa las filas duplicadas y desaparecen cabeceras.
+                  const filaA = renderFila(a, { bg: "bg-rose-50" });
+                  const filaB = renderFila(b, { bg: "bg-rose-50" });
                   return [
                     // Cabecera del par
                     <tr key={claveK + "-h"} className="bg-rose-100 border-t-4 border-rose-700">
@@ -4138,10 +4143,10 @@ function PestañaProductos({ data, api, reload }) {
                         </div>
                       </td>
                     </tr>,
-                    // Producto A
-                    renderFila(a, { bg: "bg-rose-50" }),
-                    // Producto B
-                    renderFila(b, { bg: "bg-rose-50" }),
+                    // Producto A — clonamos con key única por par
+                    React.cloneElement(filaA, { key: claveK + "-a" }),
+                    // Producto B — clonamos con key única por par
+                    React.cloneElement(filaB, { key: claveK + "-b" }),
                   ];
                 });
               }
