@@ -1356,6 +1356,88 @@ const proveedorMasBarato = (producto) => {
   }, null);
 };
 
+// =========================================================
+// Helpers de ORDEN POR TAMAÑO (para fontanería)
+// =========================================================
+// Extrae la primera medida significativa del nombre del producto.
+// Devuelve { tipo: "mm"|"pulgadas"|"otro", valor: numérico para ordenar }.
+//   - "mm": diámetros en milímetros (16, 20, 25, 32, 40, 50, 63, 75, 90…)
+//   - "pulgadas": fracciones de pulgada como decimal (½ = 0.5, ¾ = 0.75, 1 = 1, 1¼ = 1.25, 2½ = 2.5…)
+//   - "otro": no se encontró medida → ordena al final alfabéticamente
+//
+// Importante: ignora prefijos técnicos como PN (presión nominal), atm, B6m que NO son diámetros.
+const extraerMedida = (texto) => {
+  if (!texto) return { tipo: "otro", valor: 0 };
+  let s = texto;
+  // Quitar prefijos técnicos que NO son medidas de diámetro
+  s = s.replace(/\bPN\s*\d+/gi, "");        // PN16, PN25 (presión nominal)
+  s = s.replace(/\bB\s*\d+\s*m\b/gi, "");   // B6m
+  s = s.replace(/\d+\s*atm\b/gi, "");       // 10 atm
+  s = s.replace(/\d+\s*°/g, "");             // 90° (grados de ángulo)
+  s = s.replace(/\d+\s*kg\b/gi, "");        // 25 kg
+  s = s.replace(/\d+\s*gr\b/gi, "");        // 250 gr (lijas)
+  s = s.replace(/\d+\s*ml\b/gi, "");        // 250 ml
+  s = s.replace(/\d+\s*l\b/gi, "");         // 5 l (litros)
+
+  // 1. Primero intentar pulgadas (con símbolo " o palabra "pulgada")
+  // Patrones: 2½", 1¼", ¾", ½", 1", 21/2", 1 1/2"
+  const pulgRegex = /(\d+)?\s*([¼½¾⅛⅜⅝⅞]|(?:1\/2|3\/4|1\/4|3\/8|5\/8|7\/8|1\/8))?\s*"/i;
+  const pulgMatch = s.match(pulgRegex);
+  if (pulgMatch) {
+    const fracMap = { "¼": 0.25, "½": 0.5, "¾": 0.75, "⅛": 0.125, "⅜": 0.375, "⅝": 0.625, "⅞": 0.875,
+                       "1/2": 0.5, "3/4": 0.75, "1/4": 0.25, "3/8": 0.375, "5/8": 0.625, "7/8": 0.875, "1/8": 0.125 };
+    const entero = pulgMatch[1] ? parseInt(pulgMatch[1]) : 0;
+    const frac = pulgMatch[2] ? (fracMap[pulgMatch[2]] || 0) : 0;
+    const total = entero + frac;
+    if (total > 0) return { tipo: "pulgadas", valor: total };
+  }
+  // Patrón "21/2" sin comilla — interpretado como 2½
+  const m21 = s.match(/\b([23456789])\s*(\d)\/(\d)\b/);
+  if (m21) {
+    const entero = parseInt(m21[1]);
+    const frac = parseInt(m21[2]) / parseInt(m21[3]);
+    if (frac > 0 && frac < 1) return { tipo: "pulgadas", valor: entero + frac };
+  }
+
+  // 2. Después intentar mm (números aislados típicos de fontanería)
+  // Buscar el primer número que SEA un diámetro estándar (16-125)
+  const diametrosComunes = [16, 20, 25, 32, 40, 50, 63, 75, 90, 110, 125, 160, 200];
+  const numRegex = /\b(\d{2,3})\b/g;
+  let match;
+  while ((match = numRegex.exec(s)) !== null) {
+    const n = parseInt(match[1]);
+    if (diametrosComunes.includes(n)) {
+      return { tipo: "mm", valor: n };
+    }
+  }
+  // Si no hay diámetro estándar, intentar el primer número de 2-3 dígitos
+  const cualquierNum = s.match(/\b(\d{2,3})\b/);
+  if (cualquierNum) return { tipo: "mm", valor: parseInt(cualquierNum[1]) };
+
+  return { tipo: "otro", valor: 0 };
+};
+
+// Compara dos productos por familia → tipo (mm primero, pulgadas después, otros al final) → valor → desc
+const compararPorTamaño = (a, b) => {
+  // 1. Familia alfabética
+  const fa = a.familia || "zzz";
+  const fb = b.familia || "zzz";
+  const cmpFam = fa.localeCompare(fb);
+  if (cmpFam !== 0) return cmpFam;
+
+  // 2. Tipo: mm < pulgadas < otro
+  const ma = extraerMedida(a.desc);
+  const mb = extraerMedida(b.desc);
+  const tipoOrden = { mm: 0, pulgadas: 1, otro: 2 };
+  if (tipoOrden[ma.tipo] !== tipoOrden[mb.tipo]) return tipoOrden[ma.tipo] - tipoOrden[mb.tipo];
+
+  // 3. Valor numérico ascendente
+  if (ma.valor !== mb.valor) return ma.valor - mb.valor;
+
+  // 4. Desempate alfabético
+  return (a.desc || "").localeCompare(b.desc || "");
+};
+
 const FAMILIAS = [
   { nombre: "Todo", icon: Boxes },
   { nombre: "Multicapa", icon: Package },
@@ -1992,7 +2074,7 @@ function CatalogoApp({ usuario, onLogout }) {
         (p.proveedores.aqua?.ref || "").toLowerCase().includes(busqueda.toLowerCase()) ||
         (p.proveedores.aram?.ref || "").toLowerCase().includes(busqueda.toLowerCase());
       return matchFam && matchSearch;
-    });
+    }).sort(compararPorTamaño);
   }, [familia, busqueda]);
 
   const getCant = (id, prov) => carrito[`${id}:${prov}`] || 0;
@@ -3837,6 +3919,7 @@ function PestañaProductos({ data, api, reload, pin }) {
     const sorted = [...lista];
     if (orden === "desc") sorted.sort((a, b) => (a.desc || "").localeCompare(b.desc || ""));
     else if (orden === "familia") sorted.sort((a, b) => (a.familia || "").localeCompare(b.familia || "") || (a.desc || "").localeCompare(b.desc || ""));
+    else if (orden === "tamaño") sorted.sort(compararPorTamaño);
     else if (orden === "precioAsc" || orden === "precioDesc") {
       const precioMin = (p) => {
         const precios = Object.values(p.proveedores || {})
@@ -3968,6 +4051,7 @@ function PestañaProductos({ data, api, reload, pin }) {
               className="border border-stone-900 px-2 py-1 text-[11px] bg-white focus:outline-none focus:bg-amber-50">
               <option value="desc">Descripción A-Z</option>
               <option value="familia">Por familia</option>
+              <option value="tamaño">Familia + tamaño (mm → pulgadas) ⭐</option>
               <option value="precioAsc">Precio: barato → caro</option>
               <option value="precioDesc">Precio: caro → barato</option>
               <option value="recientes">Recién creados primero</option>
