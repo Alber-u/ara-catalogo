@@ -1427,9 +1427,17 @@ const norm = (s) => (s || "")
   .replace(/[\u0300-\u036f]/g, "");
 
 // Detecta el tipo de pieza al inicio del nombre (codo, te, machón, fitting, válvula, etc.)
+// PRIORIDAD: si recibe un OBJETO producto con campo `tipo` puesto, lo respeta.
+// Si recibe un STRING (descripción suelta) o un producto sin `tipo`, autodetecta.
 // Devuelve un canonical lowercase para agrupar variantes ortográficas (ó/o, í/i…).
 // Si no encuentra tipo conocido, devuelve "zzz_<primera-palabra>" para que vayan al final.
-const detectarTipoPieza = (texto) => {
+const detectarTipoPieza = (entrada) => {
+  // Si nos pasan un producto con tipo manual, eso manda
+  if (entrada && typeof entrada === "object" && entrada.tipo) {
+    return entrada.tipo;
+  }
+  // Si es un objeto producto sin tipo, sacar la descripción
+  const texto = (entrada && typeof entrada === "object") ? (entrada.desc || "") : entrada;
   if (!texto) return "zzz_otro";
   const lower = texto.toLowerCase().trim();
 
@@ -3705,7 +3713,7 @@ function CatalogoApp({ usuario, onLogout }) {
           const grupos = [];
           let actual = null;
           for (const p of productos) {
-            const tipo = detectarTipoPieza(p.desc);
+            const tipo = detectarTipoPieza(p);
             if (actual && actual.tipo === tipo) {
               actual.items.push(p);
             } else {
@@ -6541,6 +6549,10 @@ function ModalEditarProducto({ producto, api, reload, onCerrar, plantillaInicial
   const [nombreCorto, setNombreCorto] = useState(inicial.nombreCorto || "");
   const [familia, setFamilia] = useState(inicial.familia || "Varios");
   const [unidad, setUnidad] = useState(inicial.unidad || "uni");
+  // Si tipo es "" se hace auto-detección por detectarTipoPieza desde la descripción.
+  // Permite al admin forzar el grupo donde aparece el producto en el catálogo
+  // (REDUCCIONES, MACHONES, etc.) cuando la detección automática se equivoca.
+  const [tipo, setTipo] = useState(inicial.tipo || "");
   // Si img es "" se hace auto-detección por helper imgTypeFromProducto
   const [img, setImg] = useState(inicial.img || "");
   const [cantPorUnidad, setCantPorUnidad] = useState(inicial.cantidadPorUnidad || "");
@@ -6569,7 +6581,7 @@ function ModalEditarProducto({ producto, api, reload, onCerrar, plantillaInicial
           proveedores[prov.id] = { ref: d.ref, bruto: parseFloat(d.bruto), dto: parseFloat(d.dto) || 0, marca: d.marca || "—" };
         }
       });
-      const body = { desc, nombreCorto: nombreCorto.trim() || null, familia, unidad, img: img || null, proveedores, cantidadPorUnidad: cantPorUnidad ? parseFloat(cantPorUnidad) : null };
+      const body = { desc, nombreCorto: nombreCorto.trim() || null, familia, unidad, tipo: tipo || null, img: img || null, proveedores, cantidadPorUnidad: cantPorUnidad ? parseFloat(cantPorUnidad) : null };
       if (esValidacion) {
         await api.post("/admin/pendiente/" + esValidacion.id + "/validar", body);
       } else if (producto) {
@@ -6613,6 +6625,45 @@ function ModalEditarProducto({ producto, api, reload, onCerrar, plantillaInicial
                    className="w-full border-2 border-violet-700 p-2 text-sm focus:bg-violet-50 focus:outline-none font-mono" />
             <div className="text-[9px] text-stone-500 mt-1">{nombreCorto.length}/50 caracteres</div>
           </div>
+          {/* TIPO DE PIEZA — agrupador del catálogo (REDUCCIONES, MACHONES, etc.)
+              Si se deja en "Auto", el tipo se detecta automáticamente desde la descripción. */}
+          <div>
+            <label className="text-[10px] tracking-widest font-bold text-stone-700 mb-1 block">
+              TIPO DE PIEZA <span className="font-normal opacity-60">(grupo del catálogo donde aparece)</span>
+            </label>
+            <select value={tipo} onChange={(e) => setTipo(e.target.value)}
+                    className="w-full border-2 border-stone-900 p-2 text-xs focus:bg-amber-50 focus:outline-none font-mono">
+              <option value="">🤖 Auto (detectar desde descripción)</option>
+              <option value="abrazadera">ABRAZADERAS</option>
+              <option value="bateria">BATERÍAS</option>
+              <option value="brida">BRIDAS</option>
+              <option value="cinta">CINTAS</option>
+              <option value="codo">CODOS</option>
+              <option value="conex">CONEXIONES</option>
+              <option value="enlace">ENLACES</option>
+              <option value="espuma">ESPUMAS</option>
+              <option value="filtro">FILTROS</option>
+              <option value="fitting">FITTINGS</option>
+              <option value="grifo">GRIFOS</option>
+              <option value="hilo">HILOS / SELLADORES</option>
+              <option value="junta">JUNTAS</option>
+              <option value="lija">LIJAS</option>
+              <option value="machon">MACHONES</option>
+              <option value="manguito">MANGUITOS</option>
+              <option value="racor">RACORES</option>
+              <option value="reduccion">REDUCCIONES</option>
+              <option value="sellador">SELLADORES</option>
+              <option value="soporte">SOPORTES</option>
+              <option value="tapon">TAPONES</option>
+              <option value="te">TES</option>
+              <option value="tenaza">TENAZAS</option>
+              <option value="tornillo">TORNILLERÍA</option>
+              <option value="tuberia">TUBERÍAS</option>
+              <option value="tuerca">TUERCAS</option>
+              <option value="valvula">VÁLVULAS</option>
+            </select>
+          </div>
+
           <div className="grid grid-cols-3 gap-2">
             <div>
               <label className="text-[10px] tracking-widest font-bold text-stone-700 mb-1 block">FAMILIA</label>
