@@ -1417,6 +1417,15 @@ const extraerMedida = (texto) => {
   return { tipo: "otro", valor: 0 };
 };
 
+// Normaliza texto para búsquedas: minúsculas + sin tildes/acentos.
+// Hace que "machón" y "machon" sean equivalentes al buscar.
+// Usar SIEMPRE en ambos lados de la comparación: norm(texto).includes(norm(query)).
+const norm = (s) => (s || "")
+  .toString()
+  .toLowerCase()
+  .normalize("NFD")
+  .replace(/[\u0300-\u036f]/g, "");
+
 // Detecta el tipo de pieza al inicio del nombre (codo, te, machón, fitting, válvula, etc.)
 // Devuelve un canonical lowercase para agrupar variantes ortográficas (ó/o, í/i…).
 // Si no encuentra tipo conocido, devuelve "zzz_<primera-palabra>" para que vayan al final.
@@ -1495,13 +1504,27 @@ const TIPOS_PIEZA = new Set([
 ]);
 
 const imgTypeFromProducto = (p) => {
-  // PRIORIDAD: la elección manual del admin (campo `img` del producto) MANDA.
-  // Si no hay elección manual (`img` vacío o null), entonces autodetectar
-  // a partir de la descripción/familia. Si la detección no saca nada útil,
-  // usar "default" (SVG dibujado).
-  if (p?.img) return p.img;
+  // ESTRATEGIA:
+  // 1. Calcular qué tipo nos saldría por detección automática (mira material en desc + familia)
+  // 2. Si la detección saca algo distinto al `img` guardado, preferir la detección,
+  //    PORQUE el `img` guardado puede ser un valor antiguo genérico ("codo") cuando
+  //    en realidad es un "Codo cobre" o "Codo PVC".
+  // 3. Si la detección no saca nada útil ("default"), entonces usar el `img` guardado como fallback.
+  // 4. CASO ESPECIAL: si el producto es claramente una pieza (codo, te...) pero el img guardado
+  //    es una foto de TUBO (cobre, tubo-pvc, etc.), descartar el img guardado y usar detección.
+  //    Esto arregla productos antiguos mal etiquetados de cuando solo había foto del tubo.
+  const imgGuardado = p?.img;
   const detectado = detectarImg(p);
-  return (detectado && detectado !== "default") ? detectado : "default";
+  const tipoPieza = detectarTipoPieza(p?.desc || "");
+
+  // Caso especial: producto es pieza pero img es de tubo → confiar en detección
+  if (imgGuardado && IMGS_DE_TUBO.has(imgGuardado) && TIPOS_PIEZA.has(tipoPieza)) {
+    if (detectado && detectado !== "default") return detectado;
+  }
+
+  if (detectado && detectado !== "default") return detectado;
+  if (imgGuardado) return imgGuardado;
+  return "default";
 };
 
 // Detección pura desde la descripción + familia
@@ -2931,10 +2954,10 @@ function CatalogoApp({ usuario, onLogout }) {
     return CATALOGO.filter(p => {
       const matchFam = familia === "Todo" || p.familia === familia;
       const matchSearch = busqueda === "" ||
-        p.desc.toLowerCase().includes(busqueda.toLowerCase()) ||
-        (p.nombreCorto || "").toLowerCase().includes(busqueda.toLowerCase()) ||
-        (p.proveedores.aqua?.ref || "").toLowerCase().includes(busqueda.toLowerCase()) ||
-        (p.proveedores.aram?.ref || "").toLowerCase().includes(busqueda.toLowerCase());
+        norm(p.desc).includes(norm(busqueda)) ||
+        norm(p.nombreCorto).includes(norm(busqueda)) ||
+        norm(p.proveedores.aqua?.ref).includes(norm(busqueda)) ||
+        norm(p.proveedores.aram?.ref).includes(norm(busqueda));
       return matchFam && matchSearch;
     }).sort(compararPorTamaño);
   }, [familia, busqueda]);
@@ -5149,10 +5172,10 @@ function PestañaProductos({ data, api, reload, pin }) {
 
     // Filtro búsqueda libre
     if (busq.trim()) {
-      const q = busq.toLowerCase();
+      const q = norm(busq);
       lista = lista.filter(p =>
-        p.desc?.toLowerCase().includes(q) ||
-        Object.values(p.proveedores || {}).some(pv => pv.ref?.toLowerCase().includes(q))
+        norm(p.desc).includes(q) ||
+        Object.values(p.proveedores || {}).some(pv => norm(pv.ref).includes(q))
       );
     }
 
@@ -5586,8 +5609,8 @@ ${(datos.ejemplos || []).map(e => `  · ${e.nombreCorto}`).join("\n")}`);
                   }
                   // Filtro por texto
                   if (filtroFotos) {
-                    const q = filtroFotos.toLowerCase();
-                    lista = lista.filter(i => i.tipo.toLowerCase().includes(q));
+                    const q = norm(filtroFotos);
+                    lista = lista.filter(i => norm(i.tipo).includes(q));
                   }
                   return (
                     <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 xl:grid-cols-12 gap-1.5 max-h-[40vh] overflow-y-auto">
@@ -7621,16 +7644,16 @@ function PestañaFacturas({ api, pin }) {
       <div className="bg-white border-2 border-stone-900">
         {(() => {
           // Aplicar filtros
-          const q = busqueda.toLowerCase().trim();
+          const q = norm(busqueda).trim();
           const facturasFiltradas = facturas.filter(f => {
             if (filtroEstado !== "todos" && f.estado !== filtroEstado) return false;
             // El filtro de proveedor compara por nombre NORMALIZADO (sin tildes, mayúsculas, etc.)
             // así matchea aunque la IA haya extraído variantes ligeramente distintas.
             if (filtroProveedor !== "todos" && normalizarProv(f.datosExtraidos?.proveedor) !== filtroProveedor) return false;
             if (q) {
-              const enNombre = (f.archivoOriginal || "").toLowerCase().includes(q);
-              const enProv = (f.datosExtraidos?.proveedor || "").toLowerCase().includes(q);
-              const enNum = (f.datosExtraidos?.numero_factura || "").toLowerCase().includes(q);
+              const enNombre = norm(f.archivoOriginal).includes(q);
+              const enProv = norm(f.datosExtraidos?.proveedor).includes(q);
+              const enNum = norm(f.datosExtraidos?.numero_factura).includes(q);
               if (!enNombre && !enProv && !enNum) return false;
             }
             return true;
@@ -7816,14 +7839,14 @@ function PestañaFacturas({ api, pin }) {
 
       {mostrarAnalisis && (() => {
         // Recalcular facturas filtradas para el modal
-        const q = busqueda.toLowerCase().trim();
+        const q = norm(busqueda).trim();
         const facturasParaAnalisis = facturas.filter(f => {
           if (filtroEstado !== "todos" && f.estado !== filtroEstado) return false;
           if (filtroProveedor !== "todos" && f.datosExtraidos?.proveedor !== filtroProveedor) return false;
           if (q) {
-            const enNombre = (f.archivoOriginal || "").toLowerCase().includes(q);
-            const enProv = (f.datosExtraidos?.proveedor || "").toLowerCase().includes(q);
-            const enNum = (f.datosExtraidos?.numero_factura || "").toLowerCase().includes(q);
+            const enNombre = norm(f.archivoOriginal).includes(q);
+            const enProv = norm(f.datosExtraidos?.proveedor).includes(q);
+            const enNum = norm(f.datosExtraidos?.numero_factura).includes(q);
             if (!enNombre && !enProv && !enNum) return false;
           }
           return true;
@@ -7908,13 +7931,13 @@ function ModalEquivalencias({ pin, onCerrar }) {
   const proveedoresUnicos = Array.from(new Set(equivalencias.map(e => e.proveedor_nombre))).sort();
 
   // Filtrar
-  const q = busqueda.toLowerCase().trim();
+  const q = norm(busqueda).trim();
   const filtradas = equivalencias.filter(eq => {
     if (filtroProveedor !== "todos" && eq.proveedor_nombre !== filtroProveedor) return false;
     if (q) {
-      const enRef = eq.referencia_proveedor.toLowerCase().includes(q);
-      const enDescProv = (eq.descripcion_proveedor || "").toLowerCase().includes(q);
-      const enDescCat = (eq.producto_desc || "").toLowerCase().includes(q);
+      const enRef = norm(eq.referencia_proveedor).includes(q);
+      const enDescProv = norm(eq.descripcion_proveedor).includes(q);
+      const enDescCat = norm(eq.producto_desc).includes(q);
       if (!enRef && !enDescProv && !enDescCat) return false;
     }
     return true;
@@ -8070,9 +8093,9 @@ function ModalEquivalencias({ pin, onCerrar }) {
                             {busquedaProd.length >= 2 && (
                               <div className="mt-1 max-h-48 overflow-y-auto border border-violet-300 bg-white">
                                 {(() => {
-                                  const ql = busquedaProd.toLowerCase();
+                                  const ql = norm(busquedaProd);
                                   const resultados = CATALOGO.filter(p =>
-                                    p.desc.toLowerCase().includes(ql) || p.id.toLowerCase().includes(ql)
+                                    norm(p.desc).includes(ql) || norm(p.id).includes(ql)
                                   ).slice(0, 20);
                                   if (resultados.length === 0) {
                                     return <div className="p-2 text-[11px] text-stone-500 italic">Ningún producto coincide</div>;
@@ -8240,7 +8263,7 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, pin, onCerrar, onAbr
 
   // Filtrar y ordenar
   const lista = useMemo(() => {
-    const q = busquedaProd.toLowerCase().trim();
+    const q = norm(busquedaProd).trim();
     return agregado
       .filter(p => {
         if (filtroDireccion === "sube" && p.impactoTotal <= 0.01) return false;
@@ -8249,8 +8272,8 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, pin, onCerrar, onAbr
         if (filtroDireccion === "nuevo" && (p.estadoCount.nuevo || 0) === 0) return false;
         if (filtroDireccion === "pendiente" && (p.estadoCount.pendiente || 0) + (p.estadoCount.revisar || 0) === 0) return false;
         if (q) {
-          const enDesc = (p.descCat || p.descFact).toLowerCase().includes(q);
-          const enRef = p.ref.toLowerCase().includes(q);
+          const enDesc = norm(p.descCat || p.descFact).includes(q);
+          const enRef = norm(p.ref).includes(q);
           if (!enDesc && !enRef) return false;
         }
         return true;
@@ -9287,11 +9310,11 @@ function ModalCrearProductoDesdeAnalisis({ producto, pin, onCerrar, onCreado }) 
     }
 
     // Filtro de búsqueda: descripción, id o ref de proveedor
-    const q = busquedaProd.toLowerCase();
+    const q = norm(busquedaProd);
     resultado = resultado.filter(p =>
-      p.desc?.toLowerCase().includes(q) ||
-      p.id?.toLowerCase().includes(q) ||
-      Object.values(p.proveedores || {}).some(pv => pv.ref?.toLowerCase().includes(q))
+      norm(p.desc).includes(q) ||
+      norm(p.id).includes(q) ||
+      Object.values(p.proveedores || {}).some(pv => norm(pv.ref).includes(q))
     );
 
     // Ordenar por similitud combinada (query + descripción facturada del proveedor)
@@ -10308,11 +10331,11 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
                             className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:outline-none focus:bg-white" />
                           <div className="max-h-48 overflow-y-auto border border-stone-200 bg-white">
                             {(() => {
-                              const q = busquedaCambio.toLowerCase().trim();
+                              const q = norm(busquedaCambio).trim();
                               const filtrados = q
                                 ? CATALOGO.filter(p =>
-                                    p.desc.toLowerCase().includes(q) ||
-                                    Object.values(p.proveedores || {}).some(pv => (pv?.ref || "").toLowerCase().includes(q))
+                                    norm(p.desc).includes(q) ||
+                                    Object.values(p.proveedores || {}).some(pv => norm(pv?.ref).includes(q))
                                   ).slice(0, 30)
                                 : [];
                               if (!q) return <div className="p-2 text-[10px] text-stone-500 italic">Empieza a escribir para ver resultados…</div>;
