@@ -5440,7 +5440,9 @@ ${(datos.ejemplos || []).map(e => `  · ${e.nombreCorto}`).join("\n")}`);
                     className={`w-14 h-14 border-2 ${imgEditandoId === p.id ? "border-amber-500 bg-amber-50" : "border-stone-900 bg-white hover:border-amber-500"} flex items-center justify-center shrink-0 relative`}
                     title="Click para cambiar imagen"
                   >
-                    <ProductSVG type={tipoActual} />
+                    {/* key compuesta para que React re-monte el SVG cuando cambia el tipo
+                        (sin key, el componente conserva su estado imgFailed antiguo) */}
+                    <ProductSVG key={p.id + ":" + tipoActual} type={tipoActual} />
                     {enModoAuto && (
                       <span className="absolute -bottom-0.5 -right-0.5 bg-amber-400 border border-stone-900 text-[6px] font-black px-1 leading-tight">AUTO</span>
                     )}
@@ -5483,7 +5485,10 @@ ${(datos.ejemplos || []).map(e => `  · ${e.nombreCorto}`).join("\n")}`);
                 });
                 console.log("[guardar img] Respuesta OK:", resp);
                 setImgEditandoId(null);
-                reload();
+                // reload completo: refresca catálogo (productos con sus img actualizados)
+                // y también recargamos imágenes backend por si afecta
+                await reload();
+                console.log("[guardar img] Reload completo, producto actualizado");
               } catch (e) {
                 console.error("[guardar img] ERROR:", e);
                 alert("Error al guardar: " + e.message);
