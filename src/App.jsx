@@ -5517,8 +5517,10 @@ ${(datos.ejemplos || []).map(e => `  · ${e.nombreCorto}`).join("\n")}`);
                 console.log("[guardar img] Respuesta OK:", resp);
                 setImgEditandoId(null);
                 // reload completo: refresca catálogo (productos con sus img actualizados)
-                // y también recargamos imágenes backend por si afecta
                 await reload();
+                // Disparar evento para que TODOS los componentes ProductSVG re-rendericen
+                // (necesario porque el componente cachea su estado interno y la URL backend)
+                invalidarCacheImagenesBackend();
                 console.log("[guardar img] Reload completo, producto actualizado");
               } catch (e) {
                 console.error("[guardar img] ERROR:", e);
