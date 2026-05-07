@@ -5471,17 +5471,21 @@ ${(datos.ejemplos || []).map(e => `  · ${e.nombreCorto}`).join("\n")}`);
               ...Array.from(TIPOS_CON_FOTO).sort().map(t => ({ val: t, label: t })),
             ];
             const guardar = async (nuevoImg) => {
+              console.log("[guardar img] producto:", p.id, "nuevoImg:", nuevoImg);
               try {
-                await api.put("/admin/producto/" + p.id, {
+                console.log("[guardar img] Llamando api.put...");
+                const resp = await api.put("/admin/producto/" + p.id, {
                   desc: p.desc, nombreCorto: p.nombreCorto || null,
                   familia: p.familia, unidad: p.unidad,
                   img: nuevoImg || null,
                   proveedores: p.proveedores,
                   cantidadPorUnidad: p.cantidadPorUnidad || null,
                 });
+                console.log("[guardar img] Respuesta OK:", resp);
                 setImgEditandoId(null);
                 reload();
               } catch (e) {
+                console.error("[guardar img] ERROR:", e);
                 alert("Error al guardar: " + e.message);
               }
             };
