@@ -1732,10 +1732,51 @@ const TIPOS_CON_FOTO = new Set([
   "adhesivo-pvc",
 ]);
 
+// Lista global de imágenes subidas al backend, cargada al iniciar la app.
+// Se usa para que ProductSVG sepa qué tipos también existen como foto subida por el admin.
+let _imagenesBackendCache = null;
+let _imagenesBackendCacheTimestamp = 0;
+async function fetchImagenesBackend() {
+  // Cache de 60 segundos para no martillar al backend
+  const ahora = Date.now();
+  if (_imagenesBackendCache && (ahora - _imagenesBackendCacheTimestamp) < 60000) {
+    return _imagenesBackendCache;
+  }
+  try {
+    const r = await fetch("https://araujo-bot.onrender.com/api/facturas/imagenes");
+    const d = await r.json();
+    _imagenesBackendCache = (d.imagenes || []).reduce((acc, img) => {
+      acc[img.nombre] = img.url; return acc;
+    }, {});
+    _imagenesBackendCacheTimestamp = ahora;
+  } catch {
+    _imagenesBackendCache = _imagenesBackendCache || {};
+  }
+  return _imagenesBackendCache;
+}
+
 const ProductSVG = ({ type }) => {
   // Si existe foto real para este tipo, la mostramos en lugar del SVG dibujado.
-  // El SVG queda como fallback cuando no hay foto disponible o falla la carga.
+  // Orden de prioridad:
+  //   1) Foto en frontend public/imgs/{type}.png (las 66 originales del git)
+  //   2) Foto en backend /api/facturas/imagenes/ (subidas por panel admin)
+  //   3) SVG dibujado (fallback)
   const [imgFailed, setImgFailed] = useState(false);
+  const [backendUrl, setBackendUrl] = useState(null);
+
+  // Cargar imágenes del backend (solo si type no está en frontend)
+  useEffect(() => {
+    if (!type || TIPOS_CON_FOTO.has(type)) return;
+    let cancelled = false;
+    fetchImagenesBackend().then(map => {
+      if (!cancelled && map[type]) {
+        setBackendUrl("https://araujo-bot.onrender.com" + map[type]);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [type]);
+
+  // Foto del frontend
   if (type && TIPOS_CON_FOTO.has(type) && !imgFailed) {
     return (
       <div className="w-full h-full flex items-center justify-center bg-white">
@@ -1749,6 +1790,21 @@ const ProductSVG = ({ type }) => {
       </div>
     );
   }
+  // Foto del backend (subida por admin)
+  if (backendUrl && !imgFailed) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-white">
+        <img
+          src={backendUrl}
+          alt={type}
+          className="max-w-full max-h-full object-contain"
+          onError={() => setImgFailed(true)}
+          loading="lazy"
+        />
+      </div>
+    );
+  }
+  // SVG dibujado (fallback)
   return <ProductSVGDrawn type={type} />;
 };
 
@@ -4548,6 +4604,256 @@ function StatCard({ titulo, valor, sub, color }) {
 // =========================================================
 //  PESTAÑA PRODUCTOS — gestión catálogo + validar pendientes
 // =========================================================
+// =========================================================
+// Galería de imágenes — gestión de fotos subidas al backend
+// (las del frontend public/imgs/ están en TIPOS_CON_FOTO y no se editan aquí)
+// =========================================================
+function GaleriaImagenes({ imagenesBackend, onSubir, onBorrar, onEditar, subiendo, errorSubida, familias }) {
+  const [colapsado, setColapsado] = useState(false);
+  const [modalSubir, setModalSubir] = useState(null); // {file, nombre, familia} en preparación
+  const fileInputRef = React.useRef(null);
+  const [editando, setEditando] = useState(null); // nombre de imagen en edición
+  const [filtroFam, setFiltroFam] = useState("");
+
+  // Lista combinada: las del git (TIPOS_CON_FOTO) + las del backend
+  const imagenesGit = Array.from(TIPOS_CON_FOTO).sort().map(t => ({
+    nombre: t,
+    archivo: `${t}.png`,
+    url: `/imgs/${t}.png`,
+    familia: "",
+    origen: "git",
+  }));
+  const imagenesBack = (imagenesBackend || []).map(i => ({
+    ...i,
+    url: i.url.startsWith("http") ? i.url : "https://araujo-bot.onrender.com" + i.url,
+    origen: "backend",
+  }));
+  const todas = [...imagenesGit, ...imagenesBack];
+  const filtradas = filtroFam ? todas.filter(i => (i.familia || "") === filtroFam) : todas;
+
+  const handleFileChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!/^image\/(png|jpeg|jpg|webp)$/i.test(file.type)) {
+      alert("Solo PNG, JPG o WEBP");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      alert("Máximo 5 MB");
+      return;
+    }
+    // Sugerir nombre desde el archivo (sin extensión)
+    const nombreSugerido = file.name.replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9-]/g, "-");
+    setModalSubir({ file, nombre: nombreSugerido, familia: "" });
+    e.target.value = ""; // permitir subir el mismo archivo otra vez
+  };
+
+  const handleSubir = async () => {
+    if (!modalSubir?.file || !modalSubir?.nombre) return;
+    try {
+      await onSubir(modalSubir.file, modalSubir.nombre, modalSubir.familia);
+      setModalSubir(null);
+    } catch (e) {
+      // Error ya queda en errorSubida
+    }
+  };
+
+  return (
+    <div className="bg-white border-2 border-stone-900 mb-4">
+      {/* Cabecera */}
+      <div className="bg-cyan-100 border-b-2 border-stone-900 px-3 py-2 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <button onClick={() => setColapsado(!colapsado)} className="text-stone-900 font-bold text-sm">
+            {colapsado ? "▶" : "▼"}
+          </button>
+          <div className="text-[11px] font-bold tracking-widest text-stone-900">
+            🖼 GALERÍA DE IMÁGENES · {todas.length} disponibles ({imagenesGit.length} del sistema + {imagenesBack.length} subidas)
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {familias.length > 0 && (
+            <select value={filtroFam} onChange={(e) => setFiltroFam(e.target.value)}
+                    className="text-[10px] border-2 border-stone-900 px-2 py-1 bg-white">
+              <option value="">Todas las familias</option>
+              {familias.map(f => <option key={f} value={f}>{f}</option>)}
+            </select>
+          )}
+          <button onClick={() => fileInputRef.current?.click()}
+                  className="bg-amber-400 hover:bg-amber-500 border-2 border-stone-900 text-stone-900 text-[10px] font-bold tracking-widest px-3 py-1.5">
+            ⬆ SUBIR IMAGEN
+          </button>
+          <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/webp" onChange={handleFileChange} className="hidden" />
+        </div>
+      </div>
+
+      {/* Mensaje de error global */}
+      {errorSubida && (
+        <div className="bg-rose-100 border-b-2 border-rose-400 px-3 py-2 text-xs text-rose-900">
+          ❌ Error al subir: {errorSubida}
+        </div>
+      )}
+
+      {/* Grid de imágenes */}
+      {!colapsado && (
+        <div className="p-3 grid grid-cols-3 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-10 xl:grid-cols-12 gap-2 max-h-[40vh] overflow-y-auto">
+          {filtradas.map(img => (
+            <div key={img.origen + ":" + img.nombre}
+                 className={`border-2 ${img.origen === "git" ? "border-stone-300" : "border-emerald-500"} bg-white p-1 relative group`}>
+              {/* Badge origen */}
+              <span className={`absolute top-0 left-0 text-[6px] font-bold px-1 ${img.origen === "git" ? "bg-stone-700 text-white" : "bg-emerald-500 text-white"}`}>
+                {img.origen === "git" ? "SISTEMA" : "TUYA"}
+              </span>
+              {/* Vista previa */}
+              <div className="aspect-square flex items-center justify-center overflow-hidden">
+                <img src={img.url} alt={img.nombre} className="max-w-full max-h-full object-contain" loading="lazy" />
+              </div>
+              {/* Nombre */}
+              <div className="text-[8px] font-bold text-stone-700 truncate text-center mt-1" title={img.nombre}>
+                {img.nombre}
+              </div>
+              {img.familia && (
+                <div className="text-[7px] text-stone-500 truncate text-center" title={img.familia}>
+                  {img.familia}
+                </div>
+              )}
+              {/* Acciones (solo para imágenes del backend) */}
+              {img.origen === "backend" && (
+                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1">
+                  <button onClick={() => setEditando(img.nombre)}
+                          className="bg-amber-400 hover:bg-amber-500 text-stone-900 text-[8px] font-bold px-2 py-0.5 border border-stone-900">
+                    ✏ EDITAR
+                  </button>
+                  <button onClick={() => onBorrar(img.nombre)}
+                          className="bg-rose-500 hover:bg-rose-600 text-white text-[8px] font-bold px-2 py-0.5 border border-stone-900">
+                    🗑 BORRAR
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+          {filtradas.length === 0 && (
+            <div className="col-span-full text-center text-stone-500 text-xs py-4">
+              No hay imágenes con ese filtro
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Modal subir nueva imagen */}
+      {modalSubir && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" onClick={() => setModalSubir(null)}>
+          <div className="bg-white border-4 border-stone-900 max-w-md w-full p-4" onClick={(e) => e.stopPropagation()}>
+            <div className="font-bold text-sm mb-3 tracking-widest">⬆ SUBIR NUEVA IMAGEN</div>
+            {/* Vista previa */}
+            <div className="border-2 border-stone-300 bg-stone-50 p-2 mb-3">
+              <img src={URL.createObjectURL(modalSubir.file)} alt="preview" className="max-h-48 mx-auto" />
+              <div className="text-[10px] text-stone-500 text-center mt-1">
+                {modalSubir.file.name} · {Math.round(modalSubir.file.size / 1024)} KB
+              </div>
+            </div>
+            {/* Nombre */}
+            <label className="text-[10px] tracking-widest font-bold text-stone-700 mb-1 block">
+              NOMBRE DE LA IMAGEN <span className="text-rose-500">*</span>
+            </label>
+            <input type="text" value={modalSubir.nombre}
+                   onChange={(e) => setModalSubir(s => ({ ...s, nombre: e.target.value }))}
+                   placeholder="ej: codo-laton-pn25"
+                   className="w-full border-2 border-stone-900 px-2 py-1.5 text-sm mb-1 font-mono" />
+            <div className="text-[9px] text-stone-500 mb-3">
+              Solo letras, números y guiones. Se usará como ID en los productos.
+            </div>
+            {/* Familia */}
+            <label className="text-[10px] tracking-widest font-bold text-stone-700 mb-1 block">
+              FAMILIA (opcional)
+            </label>
+            <input type="text" value={modalSubir.familia} list="familias-list"
+                   onChange={(e) => setModalSubir(s => ({ ...s, familia: e.target.value }))}
+                   placeholder="ej: Latón roscar"
+                   className="w-full border-2 border-stone-900 px-2 py-1.5 text-sm mb-3" />
+            <datalist id="familias-list">
+              {familias.map(f => <option key={f} value={f} />)}
+            </datalist>
+            {/* Botones */}
+            <div className="flex gap-2">
+              <button onClick={() => setModalSubir(null)}
+                      className="flex-1 border-2 border-stone-900 px-3 py-2 text-xs font-bold tracking-widest hover:bg-stone-100">
+                CANCELAR
+              </button>
+              <button onClick={handleSubir} disabled={subiendo || !modalSubir.nombre}
+                      className={`flex-1 border-2 border-stone-900 px-3 py-2 text-xs font-bold tracking-widest ${subiendo ? "bg-amber-300 cursor-wait animate-pulse" : "bg-emerald-400 hover:bg-emerald-500"} text-stone-900 disabled:opacity-50`}>
+                {subiendo ? "⏳ SUBIENDO..." : "✓ SUBIR"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal editar imagen */}
+      {editando && (() => {
+        const img = imagenesBack.find(i => i.nombre === editando);
+        if (!img) return null;
+        return <ModalEditarImagen img={img} familias={familias} onCerrar={() => setEditando(null)}
+                                  onGuardar={async (cambios) => {
+                                    await onEditar(img.nombre, cambios);
+                                    setEditando(null);
+                                  }} />;
+      })()}
+    </div>
+  );
+}
+
+function ModalEditarImagen({ img, familias, onCerrar, onGuardar }) {
+  const [nombre, setNombre] = useState(img.nombre);
+  const [familia, setFamilia] = useState(img.familia || "");
+  const [guardando, setGuardando] = useState(false);
+
+  const guardar = async () => {
+    setGuardando(true);
+    try {
+      const cambios = {};
+      if (nombre !== img.nombre) cambios.nuevoNombre = nombre;
+      if (familia !== (img.familia || "")) cambios.familia = familia;
+      if (Object.keys(cambios).length === 0) { onCerrar(); return; }
+      await onGuardar(cambios);
+    } catch (e) {
+      alert("Error: " + e.message);
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" onClick={onCerrar}>
+      <div className="bg-white border-4 border-stone-900 max-w-md w-full p-4" onClick={(e) => e.stopPropagation()}>
+        <div className="font-bold text-sm mb-3 tracking-widest">✏ EDITAR IMAGEN</div>
+        <div className="border-2 border-stone-300 bg-stone-50 p-2 mb-3">
+          <img src={img.url} alt={img.nombre} className="max-h-32 mx-auto" />
+        </div>
+        <label className="text-[10px] tracking-widest font-bold text-stone-700 mb-1 block">NOMBRE</label>
+        <input type="text" value={nombre} onChange={(e) => setNombre(e.target.value)}
+               className="w-full border-2 border-stone-900 px-2 py-1.5 text-sm mb-3 font-mono" />
+        <label className="text-[10px] tracking-widest font-bold text-stone-700 mb-1 block">FAMILIA</label>
+        <input type="text" value={familia} list="familias-list-edit"
+               onChange={(e) => setFamilia(e.target.value)}
+               className="w-full border-2 border-stone-900 px-2 py-1.5 text-sm mb-3" />
+        <datalist id="familias-list-edit">
+          {familias.map(f => <option key={f} value={f} />)}
+        </datalist>
+        <div className="flex gap-2">
+          <button onClick={onCerrar}
+                  className="flex-1 border-2 border-stone-900 px-3 py-2 text-xs font-bold tracking-widest hover:bg-stone-100">
+            CANCELAR
+          </button>
+          <button onClick={guardar} disabled={guardando}
+                  className={`flex-1 border-2 border-stone-900 px-3 py-2 text-xs font-bold tracking-widest ${guardando ? "bg-amber-300 cursor-wait" : "bg-emerald-400 hover:bg-emerald-500"} text-stone-900`}>
+            {guardando ? "⏳" : "✓ GUARDAR"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PestañaProductos({ data, api, reload, pin }) {
   const [editando, setEditando] = useState(null); // producto que se está editando
   const [añadiendo, setAñadiendo] = useState(false);
@@ -4565,6 +4871,88 @@ function PestañaProductos({ data, api, reload, pin }) {
   const [parFusion, setParFusion] = useState(null); // {a, b, score} cuando se está fusionando un par
   const [modoImagenes, setModoImagenes] = useState(false); // vista compacta para asignar imágenes en bulk
   const [imgEditandoId, setImgEditandoId] = useState(null); // id del producto cuya imagen se está cambiando
+
+  // Imágenes subidas al backend (las del git/frontend van aparte en TIPOS_CON_FOTO)
+  const [imagenesBackend, setImagenesBackend] = useState([]);
+  const [subiendoImg, setSubiendoImg] = useState(false);
+  const [errorSubidaImg, setErrorSubidaImg] = useState(null);
+  const FAC_URL_IMGS = "https://araujo-bot.onrender.com/api/facturas";
+
+  // Cargar imágenes del backend cuando entras en modo imágenes
+  useEffect(() => {
+    if (!modoImagenes) return;
+    fetch(`${FAC_URL_IMGS}/imagenes`)
+      .then(r => r.json())
+      .then(d => setImagenesBackend(d.imagenes || []))
+      .catch(e => console.warn("No se pudieron cargar imágenes del backend:", e));
+  }, [modoImagenes]);
+
+  // Subir nueva imagen al backend
+  const subirImagen = async (file, nombre, familia) => {
+    setSubiendoImg(true);
+    setErrorSubidaImg(null);
+    try {
+      // Convertir archivo a base64
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error("Error leyendo archivo"));
+        reader.readAsDataURL(file);
+      });
+      const res = await fetch(`${FAC_URL_IMGS}/imagenes/upload`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-pin": pin },
+        body: JSON.stringify({ nombre, familia: familia || "", base64 }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      // Recargar lista
+      const r2 = await fetch(`${FAC_URL_IMGS}/imagenes`);
+      const d2 = await r2.json();
+      setImagenesBackend(d2.imagenes || []);
+      return data;
+    } catch (e) {
+      setErrorSubidaImg(e.message);
+      throw e;
+    } finally {
+      setSubiendoImg(false);
+    }
+  };
+
+  // Borrar imagen del backend
+  const borrarImagen = async (nombre) => {
+    if (!confirm(`¿Borrar la imagen "${nombre}"? Los productos que la usen volverán a modo automático.`)) return;
+    try {
+      const res = await fetch(`${FAC_URL_IMGS}/imagenes/${encodeURIComponent(nombre)}`, {
+        method: "DELETE",
+        headers: { "x-pin": pin },
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setImagenesBackend(prev => prev.filter(i => i.nombre !== nombre));
+    } catch (e) {
+      alert("Error al borrar: " + e.message);
+    }
+  };
+
+  // Renombrar/cambiar familia de imagen
+  const editarImagen = async (nombre, cambios) => {
+    try {
+      const res = await fetch(`${FAC_URL_IMGS}/imagenes/${encodeURIComponent(nombre)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", "x-pin": pin },
+        body: JSON.stringify(cambios),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const r2 = await fetch(`${FAC_URL_IMGS}/imagenes`);
+      const d2 = await r2.json();
+      setImagenesBackend(d2.imagenes || []);
+    } catch (e) {
+      alert("Error al editar: " + e.message);
+    }
+  };
 
   // Pares de duplicados descartados manualmente (persistente en localStorage)
   // Formato: Set de strings "idA__idB" (ordenado alfabéticamente para que sea consistente)
@@ -5008,10 +5396,22 @@ ${(datos.ejemplos || []).map(e => `  · ${e.nombreCorto}`).join("\n")}`);
 
       {/* === VISTA "ASIGNAR IMÁGENES" — modo compacto para revisar y cambiar fotos rápido === */}
       {modoImagenes && (
+        <>
+        {/* GALERÍA — gestión de imágenes (subir, ver, renombrar, borrar) */}
+        <GaleriaImagenes
+          imagenesBackend={imagenesBackend}
+          onSubir={subirImagen}
+          onBorrar={borrarImagen}
+          onEditar={editarImagen}
+          subiendo={subiendoImg}
+          errorSubida={errorSubidaImg}
+          familias={Array.from(new Set(data.productos.map(p => p.familia).filter(Boolean))).sort()}
+        />
+
         <div className="bg-white border-2 border-stone-900 p-3">
           <div className="flex items-center justify-between mb-3 pb-2 border-b-2 border-stone-300">
             <div className="text-[11px] font-bold tracking-widest text-stone-900">
-              🖼 MODO ASIGNAR IMÁGENES · {productos.length} productos
+              🖼 ASIGNAR FOTOS A PRODUCTOS · {productos.length} productos
             </div>
             <div className="text-[10px] text-stone-500">
               Click sobre la foto para cambiarla
@@ -5098,11 +5498,17 @@ ${(datos.ejemplos || []).map(e => `  · ${e.nombreCorto}`).join("\n")}`);
                     <div className="text-2xl">🤖</div>
                     <div className="text-[8px] font-bold text-stone-900">AUTO</div>
                   </button>
-                  {/* Una mini foto por cada tipo disponible */}
-                  {Array.from(TIPOS_CON_FOTO).sort().map(tipo => (
-                    <button key={tipo} onClick={() => guardar(tipo)}
-                            className={`p-0.5 border-2 ${p.img === tipo ? "border-amber-400 bg-amber-100" : "border-stone-600 bg-white hover:border-amber-400"} aspect-square flex flex-col items-center justify-center overflow-hidden`}
-                            title={tipo}>
+                  {/* Una mini foto por cada tipo disponible (sistema + tuyas) */}
+                  {[
+                    ...Array.from(TIPOS_CON_FOTO).sort().map(t => ({ tipo: t, origen: "git" })),
+                    ...imagenesBackend.map(i => ({ tipo: i.nombre, origen: "backend" })),
+                  ].map(({ tipo, origen }) => (
+                    <button key={origen + ":" + tipo} onClick={() => guardar(tipo)}
+                            className={`p-0.5 border-2 ${p.img === tipo ? "border-amber-400 bg-amber-100" : (origen === "backend" ? "border-emerald-500 bg-white hover:border-amber-400" : "border-stone-600 bg-white hover:border-amber-400")} aspect-square flex flex-col items-center justify-center overflow-hidden relative`}
+                            title={tipo + (origen === "backend" ? " (subida por ti)" : "")}>
+                      {origen === "backend" && (
+                        <span className="absolute top-0 left-0 text-[6px] font-bold px-0.5 bg-emerald-500 text-white">★</span>
+                      )}
                       <div className="w-full h-3/4 flex items-center justify-center">
                         <ProductSVG type={tipo} />
                       </div>
@@ -5114,6 +5520,7 @@ ${(datos.ejemplos || []).map(e => `  · ${e.nombreCorto}`).join("\n")}`);
             );
           })()}
         </div>
+        </>
       )}
 
       {/* Tabla productos (vista normal) */}
