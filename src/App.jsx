@@ -4563,6 +4563,8 @@ function PestañaProductos({ data, api, reload, pin }) {
   const [verDuplicados, setVerDuplicados] = useState(false);
   const [umbralDuplicados, setUmbralDuplicados] = useState("estricto"); // estricto (80%) | normal (60%) | permisivo (40%)
   const [parFusion, setParFusion] = useState(null); // {a, b, score} cuando se está fusionando un par
+  const [modoImagenes, setModoImagenes] = useState(false); // vista compacta para asignar imágenes en bulk
+  const [imgEditandoId, setImgEditandoId] = useState(null); // id del producto cuya imagen se está cambiando
 
   // Pares de duplicados descartados manualmente (persistente en localStorage)
   // Formato: Set de strings "idA__idB" (ordenado alfabéticamente para que sea consistente)
@@ -4983,6 +4985,12 @@ ${(datos.ejemplos || []).map(e => `  · ${e.nombreCorto}`).join("\n")}`);
                   className={`text-[10px] font-bold tracking-widest px-3 py-1.5 border-2 border-stone-900 ${generandoNombres ? "bg-amber-300 cursor-wait animate-pulse" : "bg-violet-200 hover:bg-violet-300"} text-stone-900`}>
             {generandoNombres ? "⏳ GENERANDO… NO CIERRES" : "🤖 NOMBRES CORTOS IA"}
           </button>
+
+          {/* Botón modo "asignar imágenes" — vista compacta para revisar y cambiar fotos rápido */}
+          <button onClick={() => setModoImagenes(v => !v)}
+                  className={`text-[10px] font-bold tracking-widest px-3 py-1.5 border-2 border-stone-900 ${modoImagenes ? "bg-amber-400 hover:bg-amber-500" : "bg-cyan-100 hover:bg-cyan-200"} text-stone-900`}>
+            {modoImagenes ? "✕ SALIR IMÁGENES" : "🖼 ASIGNAR IMÁGENES"}
+          </button>
         </div>
       </div>
 
@@ -4998,7 +5006,118 @@ ${(datos.ejemplos || []).map(e => `  · ${e.nombreCorto}`).join("\n")}`);
         </div>
       )}
 
-      {/* Tabla productos */}
+      {/* === VISTA "ASIGNAR IMÁGENES" — modo compacto para revisar y cambiar fotos rápido === */}
+      {modoImagenes && (
+        <div className="bg-white border-2 border-stone-900 p-3">
+          <div className="flex items-center justify-between mb-3 pb-2 border-b-2 border-stone-300">
+            <div className="text-[11px] font-bold tracking-widest text-stone-900">
+              🖼 MODO ASIGNAR IMÁGENES · {productos.length} productos
+            </div>
+            <div className="text-[10px] text-stone-500">
+              Click sobre la foto para cambiarla
+            </div>
+          </div>
+
+          {/* Galería compacta — una fila por producto */}
+          <div className="space-y-1.5 max-h-[70vh] overflow-y-auto">
+            {productos.map((p) => {
+              const tipoActual = imgTypeFromProducto(p);
+              const enModoAuto = !p.img;
+              return (
+                <div key={p.id} className="flex items-center gap-2 p-1.5 hover:bg-stone-50 border border-stone-200">
+                  {/* Foto actual (clicable para cambiar) */}
+                  <button
+                    onClick={() => setImgEditandoId(p.id === imgEditandoId ? null : p.id)}
+                    className={`w-14 h-14 border-2 ${imgEditandoId === p.id ? "border-amber-500 bg-amber-50" : "border-stone-900 bg-white hover:border-amber-500"} flex items-center justify-center shrink-0 relative`}
+                    title="Click para cambiar imagen"
+                  >
+                    <ProductSVG type={tipoActual} />
+                    {enModoAuto && (
+                      <span className="absolute -bottom-0.5 -right-0.5 bg-amber-400 border border-stone-900 text-[6px] font-black px-1 leading-tight">AUTO</span>
+                    )}
+                  </button>
+
+                  {/* Info producto */}
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[10px] tracking-widest text-stone-500 truncate">{p.familia}</div>
+                    <div className="font-bold text-xs text-stone-900 truncate" title={p.desc}>{p.desc}</div>
+                    <div className="text-[10px] text-stone-600">
+                      Imagen: <span className={enModoAuto ? "text-amber-700" : "text-violet-700 font-bold"}>{tipoActual}</span>
+                      {!enModoAuto && <span className="ml-1 text-stone-400">(fija)</span>}
+                    </div>
+                  </div>
+
+                  {/* (selector emergente está fijo abajo, no inline) */}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Selector emergente de imágenes (panel inferior fijo cuando hay producto seleccionado) */}
+          {imgEditandoId && (() => {
+            const p = productos.find(x => x.id === imgEditandoId);
+            if (!p) return null;
+            const opciones = [
+              { val: "", label: "🤖 Auto (detectar desde descripción)" },
+              ...Array.from(TIPOS_CON_FOTO).sort().map(t => ({ val: t, label: t })),
+            ];
+            const guardar = async (nuevoImg) => {
+              try {
+                const res = await fetch(`${BACKEND_URL}/${p.id}`, {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json", "x-pin": pin },
+                  body: JSON.stringify({
+                    desc: p.desc, nombreCorto: p.nombreCorto || null,
+                    familia: p.familia, unidad: p.unidad,
+                    img: nuevoImg || null,
+                    proveedores: p.proveedores,
+                    cantidadPorUnidad: p.cantidadPorUnidad || null,
+                  }),
+                });
+                if (!res.ok) throw new Error(await res.text());
+                setImgEditandoId(null);
+                reload();
+              } catch (e) {
+                alert("Error al guardar: " + e.message);
+              }
+            };
+            return (
+              <div className="fixed bottom-0 left-0 right-0 z-40 bg-stone-900 border-t-4 border-amber-400 p-3 shadow-2xl">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-amber-400 font-bold text-xs tracking-widest">
+                    ELIGE IMAGEN PARA: <span className="text-white">{p.desc}</span>
+                  </div>
+                  <button onClick={() => setImgEditandoId(null)}
+                          className="text-amber-400 hover:text-white text-xs font-bold">✕ CERRAR</button>
+                </div>
+                <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 xl:grid-cols-12 gap-1.5 max-h-[40vh] overflow-y-auto">
+                  {/* Botón "auto" primero */}
+                  <button onClick={() => guardar("")}
+                          className={`p-1 border-2 ${!p.img ? "border-amber-400 bg-amber-100" : "border-stone-600 bg-white hover:border-amber-400"} aspect-square flex flex-col items-center justify-center`}
+                          title="Modo automático (detecta desde la descripción)">
+                    <div className="text-2xl">🤖</div>
+                    <div className="text-[8px] font-bold text-stone-900">AUTO</div>
+                  </button>
+                  {/* Una mini foto por cada tipo disponible */}
+                  {Array.from(TIPOS_CON_FOTO).sort().map(tipo => (
+                    <button key={tipo} onClick={() => guardar(tipo)}
+                            className={`p-0.5 border-2 ${p.img === tipo ? "border-amber-400 bg-amber-100" : "border-stone-600 bg-white hover:border-amber-400"} aspect-square flex flex-col items-center justify-center overflow-hidden`}
+                            title={tipo}>
+                      <div className="w-full h-3/4 flex items-center justify-center">
+                        <ProductSVG type={tipo} />
+                      </div>
+                      <div className="text-[7px] font-bold text-stone-700 truncate w-full text-center mt-0.5">{tipo}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      {/* Tabla productos (vista normal) */}
+      {!modoImagenes && (
       <div className="bg-white border-2 border-stone-900 overflow-x-auto">
         <table className="w-full text-xs">
           <thead className="bg-stone-900 text-amber-400">
@@ -5129,6 +5248,7 @@ ${(datos.ejemplos || []).map(e => `  · ${e.nombreCorto}`).join("\n")}`);
           </div>
         )}
       </div>
+      )}
 
       {/* Modales */}
       {editando && (
