@@ -5698,6 +5698,7 @@ ${(datos.ejemplos || []).map(e => `  · ${e.nombreCorto}`).join("\n")}`);
         <table className="w-full text-xs">
           <thead className="bg-stone-900 text-amber-400">
             <tr>
+              <th className="p-2 text-center w-14">FOTO</th>
               <th className="p-2 text-left">FAMILIA</th>
               <th className="p-2 text-left">DESCRIPCIÓN</th>
               <th className="p-2 text-left">REF AQUA</th>
@@ -5719,6 +5720,11 @@ ${(datos.ejemplos || []).map(e => `  · ${e.nombreCorto}`).join("\n")}`);
                 const otrosProvs = Object.entries(p.proveedores || {}).filter(([k]) => k !== "aqua" && k !== "aram");
                 return (
                   <tr key={p.id} className={`hover:bg-amber-50 ${opts.bg || ""}`}>
+                    <td className="p-1 align-middle">
+                      <div className="w-12 h-12 border border-stone-300 bg-white flex items-center justify-center mx-auto overflow-hidden">
+                        <ProductSVG key={p.id + ":" + (p.tipo || "") + ":" + (p.img || "")} type={imgTypeFromProducto(p)} />
+                      </div>
+                    </td>
                     <td className="p-2 text-[10px] text-stone-500">{p.familia}</td>
                     <td className="p-2 font-bold">
                       {p.desc}
@@ -5778,7 +5784,7 @@ ${(datos.ejemplos || []).map(e => `  · ${e.nombreCorto}`).join("\n")}`);
                   return [
                     // Cabecera del par
                     <tr key={claveK + "-h"} className="bg-rose-100 border-t-4 border-rose-700">
-                      <td colSpan={7} className="p-1.5">
+                      <td colSpan={8} className="p-1.5">
                         <div className="flex items-center gap-2 text-[10px] flex-wrap">
                           <span className={`${colorScore} text-white font-bold px-1.5 py-0.5 rounded-sm whitespace-nowrap`}>
                             {labelScore}
@@ -6660,6 +6666,22 @@ function ModalEditarProducto({ producto, api, reload, onCerrar, plantillaInicial
         </div>
 
         <div className="p-4 space-y-3">
+          {/* Vista previa de la foto del producto — refleja lo que va a ver el operario.
+              Se actualiza al cambiar el campo IMAGEN o el TIPO DE PIEZA. */}
+          <div className="flex items-center gap-3 bg-stone-50 border-2 border-stone-300 p-2">
+            <div className="w-20 h-20 bg-white border-2 border-stone-900 flex items-center justify-center shrink-0 overflow-hidden">
+              <ProductSVG
+                key={"preview:" + (img || "") + ":" + (tipo || "") + ":" + desc}
+                type={imgTypeFromProducto({ desc, familia, img, tipo })}
+              />
+            </div>
+            <div className="text-[10px] text-stone-600 leading-tight">
+              <div className="font-bold tracking-widest text-stone-700 mb-1">VISTA PREVIA</div>
+              <div>Lo que verá el operario al elegir este producto.</div>
+              <div className="text-stone-400 mt-1">Cambia con la IMAGEN y el TIPO DE PIEZA elegidos.</div>
+            </div>
+          </div>
+
           <div>
             <label className="text-[10px] tracking-widest font-bold text-stone-700 mb-1 block">DESCRIPCIÓN <span className="text-stone-500 normal-case font-normal">(la que ven proveedores y va en informes)</span></label>
             <input type="text" value={desc} onChange={(e) => setDesc(e.target.value)}
