@@ -4901,7 +4901,7 @@ function PestañaProductos({ data, api, reload, pin }) {
       });
       const res = await fetch(`${FAC_URL_IMGS}/imagenes/upload`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-pin": pin },
+        headers: { "Content-Type": "application/json", "x-admin-pin": pin },
         body: JSON.stringify({ nombre, familia: familia || "", base64 }),
       });
       if (!res.ok) {
@@ -4928,7 +4928,7 @@ function PestañaProductos({ data, api, reload, pin }) {
     try {
       const res = await fetch(`${FAC_URL_IMGS}/imagenes/${encodeURIComponent(nombre)}`, {
         method: "DELETE",
-        headers: { "x-pin": pin },
+        headers: { "x-admin-pin": pin },
       });
       if (!res.ok) throw new Error(await res.text());
       setImagenesBackend(prev => prev.filter(i => i.nombre !== nombre));
@@ -4942,7 +4942,7 @@ function PestañaProductos({ data, api, reload, pin }) {
     try {
       const res = await fetch(`${FAC_URL_IMGS}/imagenes/${encodeURIComponent(nombre)}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json", "x-pin": pin },
+        headers: { "Content-Type": "application/json", "x-admin-pin": pin },
         body: JSON.stringify(cambios),
       });
       if (!res.ok) throw new Error(await res.text());
@@ -5465,7 +5465,7 @@ ${(datos.ejemplos || []).map(e => `  · ${e.nombreCorto}`).join("\n")}`);
               try {
                 const res = await fetch(`${BACKEND_URL}/${p.id}`, {
                   method: "PATCH",
-                  headers: { "Content-Type": "application/json", "x-pin": pin },
+                  headers: { "Content-Type": "application/json", "x-admin-pin": pin },
                   body: JSON.stringify({
                     desc: p.desc, nombreCorto: p.nombreCorto || null,
                     familia: p.familia, unidad: p.unidad,
