@@ -1736,10 +1736,19 @@ const TIPOS_CON_FOTO = new Set([
 // Se usa para que ProductSVG sepa qué tipos también existen como foto subida por el admin.
 let _imagenesBackendCache = null;
 let _imagenesBackendCacheTimestamp = 0;
+const IMAGENES_BACKEND_CACHE_TTL = 5000; // 5 segundos (antes 60s causaba que las nuevas tardaran en aparecer)
+
+// Función para invalidar manualmente el cache (cuando se sube/borra/edita una imagen)
+function invalidarCacheImagenesBackend() {
+  _imagenesBackendCache = null;
+  _imagenesBackendCacheTimestamp = 0;
+  // Notificar a los componentes para que se re-rendericen
+  window.dispatchEvent(new Event("imagenes-backend-actualizadas"));
+}
+
 async function fetchImagenesBackend() {
-  // Cache de 60 segundos para no martillar al backend
   const ahora = Date.now();
-  if (_imagenesBackendCache && (ahora - _imagenesBackendCacheTimestamp) < 60000) {
+  if (_imagenesBackendCache && (ahora - _imagenesBackendCacheTimestamp) < IMAGENES_BACKEND_CACHE_TTL) {
     return _imagenesBackendCache;
   }
   try {
@@ -1763,18 +1772,35 @@ const ProductSVG = ({ type }) => {
   //   3) SVG dibujado (fallback)
   const [imgFailed, setImgFailed] = useState(false);
   const [backendUrl, setBackendUrl] = useState(null);
+  // Trigger para forzar re-fetch cuando cambian las imágenes del backend
+  const [refreshTick, setRefreshTick] = useState(0);
 
   // Cargar imágenes del backend (solo si type no está en frontend)
   useEffect(() => {
-    if (!type || TIPOS_CON_FOTO.has(type)) return;
+    if (!type || TIPOS_CON_FOTO.has(type)) {
+      setBackendUrl(null);
+      return;
+    }
     let cancelled = false;
+    setImgFailed(false);
     fetchImagenesBackend().then(map => {
-      if (!cancelled && map[type]) {
-        setBackendUrl("https://araujo-bot.onrender.com" + map[type]);
+      if (cancelled) return;
+      if (map[type]) {
+        // Añadimos timestamp para evitar caché del navegador después de actualizar
+        setBackendUrl("https://araujo-bot.onrender.com" + map[type] + "?t=" + _imagenesBackendCacheTimestamp);
+      } else {
+        setBackendUrl(null);
       }
     });
     return () => { cancelled = true; };
-  }, [type]);
+  }, [type, refreshTick]);
+
+  // Escuchar el evento de actualización de imágenes para refrescar
+  useEffect(() => {
+    const handler = () => setRefreshTick(t => t + 1);
+    window.addEventListener("imagenes-backend-actualizadas", handler);
+    return () => window.removeEventListener("imagenes-backend-actualizadas", handler);
+  }, []);
 
   // Foto del frontend
   if (type && TIPOS_CON_FOTO.has(type) && !imgFailed) {
@@ -4892,7 +4918,10 @@ function PestañaProductos({ data, api, reload, pin }) {
     if (!modoImagenes) return;
     fetch(`${FAC_URL_IMGS}/imagenes`)
       .then(r => r.json())
-      .then(d => setImagenesBackend(d.imagenes || []))
+      .then(d => {
+        setImagenesBackend(d.imagenes || []);
+        invalidarCacheImagenesBackend();
+      })
       .catch(e => console.warn("No se pudieron cargar imágenes del backend:", e));
   }, [modoImagenes]);
 
@@ -4922,6 +4951,7 @@ function PestañaProductos({ data, api, reload, pin }) {
       const r2 = await fetch(`${FAC_URL_IMGS}/imagenes`);
       const d2 = await r2.json();
       setImagenesBackend(d2.imagenes || []);
+      invalidarCacheImagenesBackend();
       return data;
     } catch (e) {
       setErrorSubidaImg(e.message);
@@ -4940,7 +4970,7 @@ function PestañaProductos({ data, api, reload, pin }) {
         headers: { "x-admin-pin": pin },
       });
       if (!res.ok) throw new Error(await res.text());
-      setImagenesBackend(prev => prev.filter(i => i.nombre !== nombre));
+      setImagenesBackend(prev => prev.filter(i => i.nombre !== nombre)); invalidarCacheImagenesBackend();
     } catch (e) {
       alert("Error al borrar: " + e.message);
     }
@@ -4958,6 +4988,7 @@ function PestañaProductos({ data, api, reload, pin }) {
       const r2 = await fetch(`${FAC_URL_IMGS}/imagenes`);
       const d2 = await r2.json();
       setImagenesBackend(d2.imagenes || []);
+      invalidarCacheImagenesBackend();
     } catch (e) {
       alert("Error al editar: " + e.message);
     }
