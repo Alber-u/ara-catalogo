@@ -3760,19 +3760,12 @@ function CatalogoApp({ usuario, onLogout }) {
               grupos.push({ tipo, items: [p] });
             }
           }
-          // Etiquetas más legibles para los tipos
-          const etiquetaTipo = {
-            fitting: "FITTINGS", valvula: "VÁLVULAS", machon: "MACHONES",
-            manguito: "MANGUITOS", racor: "RACORES", filtro: "FILTROS",
-            tuberia: "TUBERÍAS", reduccion: "REDUCCIONES", tapon: "TAPONES",
-            enlace: "ENLACES", tuerca: "TUERCAS", junta: "JUNTAS",
-            soporte: "SOPORTES", abrazadera: "ABRAZADERAS",
-            bateria: "BATERÍAS", grifo: "GRIFOS", lija: "LIJAS",
-            tornillo: "TORNILLERÍA", espuma: "ESPUMAS", sellador: "SELLADORES",
-            cinta: "CINTAS", brida: "BRIDAS", tenaza: "TENAZAS",
-            hilo: "HILOS / SELLADORES", conex: "CONEXIONES",
-            codo: "CODOS", te: "TES",
-          };
+          // Etiquetas legibles para los tipos. Vienen de la lista editable del
+          // backend (gestionable desde Admin → TIPOS). Si la lista no está cargada,
+          // usamos el fallback hardcoded para que algo se vea siempre.
+          const tiposLista = getTiposPiezaActivos();
+          const etiquetaTipo = {};
+          tiposLista.forEach(t => { etiquetaTipo[t.id] = t.label; });
           return grupos.map((g, gi) => {
             const label = etiquetaTipo[g.tipo] || g.tipo.toUpperCase().replace("ZZZ_", "").replace(/_/g, " ");
             return (
@@ -9991,6 +9984,10 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
   const [nuevoProv, setNuevoProv] = useState({ nombre: factura.proveedorDesconocido?.nombreDetectado || "", formaPago: "Contado", color: "blue", email: "" });
   const [cambioIdx, setCambioIdx] = useState(null); // idx de la línea cuyo buscador 'cambiar producto' está abierto
   const [busquedaCambio, setBusquedaCambio] = useState(""); // texto del buscador
+  const [filtroFamiliaCambio, setFiltroFamiliaCambio] = useState(""); // filtro familia en el buscador
+  const [filtroTipoCambio, setFiltroTipoCambio] = useState(""); // filtro tipo en el buscador
+  // Modal de completar producto nuevo (desde "AÑADIR AL CATÁLOGO" se abre con datos de la línea pre-rellenados)
+  const [modalCompletarNuevo, setModalCompletarNuevo] = useState(null); // { lineaIdx, plantilla }
   const FAC_URL = "https://araujo-bot.onrender.com/api/facturas";
   const COLORES_PROV = ["emerald","amber","blue","violet","rose","teal"];
 
@@ -10083,6 +10080,32 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
     });
     setCambioIdx(null);
     setBusquedaCambio("");
+    setFiltroFamiliaCambio("");
+    setFiltroTipoCambio("");
+  };
+
+  // Crear un producto NUEVO completo desde el modal de "completar producto nuevo".
+  // Diferencia con marcar la línea como "nuevo": aquí se crea YA en el catálogo con
+  // todos los campos (familia, tipo, foto, nombre corto…) y se enlaza la línea con él.
+  // Ventaja: no hay que ir luego al catálogo a completar manualmente.
+  const crearProductoCompleto = async (productoData) => {
+    const { lineaIdx } = modalCompletarNuevo;
+    try {
+      const r = await fetch(BACKEND_URL + "/admin/producto", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Admin-Pin": pin },
+        body: JSON.stringify(productoData)
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const nuevo = await r.json();
+      // Refrescar CATALOGO local para que cambiarProducto encuentre el nuevo
+      CATALOGO.push(nuevo);
+      // Asociar la línea al producto recién creado (pasa a confirmada)
+      await cambiarProducto(lineaIdx, nuevo.id);
+      setModalCompletarNuevo(null);
+    } catch (e) {
+      alert("No se pudo crear el producto: " + e.message);
+    }
   };
 
   const handleConfirmar = async (forzar = false) => {
@@ -10600,7 +10623,66 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
 
                     {/* Producto sugerido (solo si tiene match válido y NO está marcado como nuevo) */}
                     <div className="p-2 space-y-2">
-                      {linea.productoSugerido && linea.estado !== "nuevo" && (
+                      {/* === PANEL COMPARATIVO CLARO PARA LÍNEAS EN REVISAR ===
+                          Mostramos lado a lado: lo que dice la factura vs lo que la IA cree
+                          que es del catálogo, con fotos. Permite decidir de un vistazo si
+                          es realmente el mismo producto o si la IA se ha confundido. */}
+                      {linea.estado === "revisar" && linea.productoSugerido && (() => {
+                        const prodCat = CATALOGO.find(p => p.id === linea.productoSugerido);
+                        if (!prodCat) return null;
+                        const provCat = prodCat.proveedores?.[linea.proveedorId];
+                        return (
+                          <div className="bg-white border-2 border-orange-600 rounded-sm overflow-hidden">
+                            <div className="bg-orange-600 text-white px-3 py-1.5 text-[10px] font-black tracking-widest flex items-center gap-2">
+                              ⚠️ ¿ES EL MISMO PRODUCTO?
+                              <span className="font-normal opacity-90">El precio difiere mucho. Comprueba antes de decidir.</span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-0">
+                              {/* COLUMNA IZQ: lo que dice la factura */}
+                              <div className="p-3 border-r-2 border-orange-300">
+                                <div className="text-[9px] font-bold tracking-widest text-stone-500 mb-2">EN ESTA FACTURA</div>
+                                <div className="text-xs font-bold mb-1 leading-tight">{linea.lineaOriginal.descripcion_original}</div>
+                                <div className="text-[10px] text-stone-600 mb-2">
+                                  Ref: <span className="font-mono">{linea.lineaOriginal.referencia_proveedor || "—"}</span>
+                                </div>
+                                <div className="text-lg font-black font-mono text-stone-900">
+                                  €{(linea.precioUnitarioNeto || 0).toFixed(4)}
+                                  <span className="text-[10px] font-normal text-stone-500"> /{linea.lineaOriginal.unidad}</span>
+                                </div>
+                              </div>
+                              {/* COLUMNA DCHA: lo que la IA cree del catálogo */}
+                              <div className="p-3 bg-stone-50">
+                                <div className="text-[9px] font-bold tracking-widest text-stone-500 mb-2">
+                                  EN TU CATÁLOGO <span className="font-normal opacity-60">(la IA cree que es esto)</span>
+                                </div>
+                                <div className="flex gap-2 items-start">
+                                  <div className="w-14 h-14 bg-white border-2 border-stone-900 flex items-center justify-center shrink-0 overflow-hidden">
+                                    <ProductSVG type={imgTypeFromProducto(prodCat)} />
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="text-xs font-bold leading-tight">{prodCat.desc}</div>
+                                    <div className="text-[10px] text-stone-600">
+                                      Ref: <span className="font-mono">{provCat?.ref || "—"}</span>
+                                      {prodCat.familia && <span className="ml-2">· {prodCat.familia}</span>}
+                                    </div>
+                                    <div className="text-sm font-black font-mono text-stone-900 mt-1">
+                                      €{(linea.precioActual || 0).toFixed(4)}
+                                      {linea.variacionPrecio && linea.variacionPrecio.pct !== 0 && (
+                                        <span className={`ml-2 text-[10px] font-bold ${linea.variacionPrecio.sube ? "text-red-600" : "text-emerald-600"}`}>
+                                          {linea.variacionPrecio.sube ? "▲" : "▼"} {Math.abs(linea.variacionPrecio.pct)}%
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      {/* Producto sugerido normal (cuando NO es revisar y SÍ tiene match) */}
+                      {linea.productoSugerido && linea.estado !== "nuevo" && linea.estado !== "revisar" && (
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-[10px] text-stone-500">Sugerido:</span>
                           <span className="text-xs font-bold flex-1">
@@ -10667,28 +10749,91 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
                       )}
 
                       {/* Botones de acción */}
-                      <div className="flex gap-1 flex-wrap">
-                        {[
-                          { key: "confirmado", label: "✓ ACTUALIZAR PRECIO",   tooltip: "Es este producto. Sustituye el precio del catálogo por el de la factura." },
-                          { key: "nuevo",      label: "+ AÑADIR AL CATÁLOGO",  tooltip: "Este producto no existe todavía. Crea un producto nuevo con los datos de la factura." },
-                          { key: "ignorado",   label: "✕ NO APLICAR",          tooltip: "Salta esta línea. No toca el catálogo y no aprende equivalencia." },
-                        ].map(btn => (
-                          <button key={btn.key}
-                            title={btn.tooltip}
-                            onClick={() => updateLinea(linea.idx, { estado: btn.key })}
-                            className={`px-2 py-1 text-[10px] font-bold border ${estadoBtn(linea, btn.key)}`}>
-                            {btn.label}
+                      {linea.estado === "revisar" && linea.productoSugerido ? (
+                        // === BOTONES CLAROS para línea en REVISAR ===
+                        // Cuando hay sospecha de emparejamiento incorrecto, los botones
+                        // hablan en términos de "¿es el mismo o no?" en lugar de
+                        // verbos técnicos como "actualizar/añadir/cambiar".
+                        <div className="flex gap-1 flex-wrap pt-1 border-t border-orange-200">
+                          <button
+                            title="La IA acertó. Es el mismo producto del catálogo y el precio nuevo es correcto."
+                            onClick={() => updateLinea(linea.idx, { estado: "confirmado" })}
+                            className="px-2 py-1.5 text-[10px] font-bold bg-emerald-600 text-white border-2 border-emerald-700 hover:bg-emerald-700">
+                            ✓ SÍ ES EL MISMO — actualiza precio
                           </button>
-                        ))}
-                        <button
-                          title="El producto sugerido por la IA está mal. Abre un buscador para elegir el correcto de tu catálogo."
-                          onClick={() => { setCambioIdx(cambioIdx === linea.idx ? null : linea.idx); setBusquedaCambio(""); }}
-                          className={`px-2 py-1 text-[10px] font-bold border ${cambioIdx === linea.idx ? "bg-violet-600 text-white border-stone-900" : "bg-white text-stone-700 border-stone-300 hover:border-violet-600 hover:text-violet-700"}`}>
-                          🔍 CAMBIAR PRODUCTO
-                        </button>
-                      </div>
+                          <button
+                            title="La IA se equivocó. Crea un producto NUEVO en el catálogo y completa familia, foto, etc."
+                            onClick={() => setModalCompletarNuevo({
+                              lineaIdx: linea.idx,
+                              plantilla: {
+                                desc: linea.descripcionPersonalizada || linea.lineaOriginal.descripcion_original || "",
+                                proveedores: { [linea.proveedorId]: {
+                                  ref: linea.lineaOriginal.referencia_proveedor || "",
+                                  bruto: linea.precioUnitarioBruto || 0,
+                                  dto: linea.descuento || 0,
+                                }},
+                                unidad: linea.lineaOriginal.unidad || "uni",
+                              }
+                            })}
+                            className="px-2 py-1.5 text-[10px] font-bold bg-blue-600 text-white border-2 border-blue-700 hover:bg-blue-700">
+                            ❌ NO — es un PRODUCTO NUEVO
+                          </button>
+                          <button
+                            title="La IA se equivocó pero el correcto SÍ existe en tu catálogo. Búscalo."
+                            onClick={() => { setCambioIdx(cambioIdx === linea.idx ? null : linea.idx); setBusquedaCambio(""); }}
+                            className={`px-2 py-1.5 text-[10px] font-bold border-2 ${cambioIdx === linea.idx ? "bg-violet-600 text-white border-violet-700" : "bg-white text-violet-700 border-violet-600 hover:bg-violet-50"}`}>
+                            🔍 NO — es OTRO del catálogo
+                          </button>
+                          <button
+                            title="Saltar esta línea: no toca el catálogo, no aprende equivalencia."
+                            onClick={() => updateLinea(linea.idx, { estado: "ignorado" })}
+                            className="px-2 py-1.5 text-[10px] font-bold bg-stone-200 text-stone-700 border-2 border-stone-400 hover:bg-stone-300">
+                            ✕ IGNORAR esta línea
+                          </button>
+                        </div>
+                      ) : (
+                        // === BOTONES NORMALES (estados pendiente, confirmado, nuevo, ignorado) ===
+                        <div className="flex gap-1 flex-wrap">
+                          {[
+                            { key: "confirmado", label: "✓ ACTUALIZAR PRECIO",   tooltip: "Es este producto. Sustituye el precio del catálogo por el de la factura." },
+                            { key: "nuevo",      label: "+ AÑADIR AL CATÁLOGO",  tooltip: "Este producto no existe todavía. Crea un producto nuevo con los datos de la factura." },
+                            { key: "ignorado",   label: "✕ NO APLICAR",          tooltip: "Salta esta línea. No toca el catálogo y no aprende equivalencia." },
+                          ].map(btn => (
+                            <button key={btn.key}
+                              title={btn.tooltip}
+                              onClick={() => {
+                                // Si elige AÑADIR AL CATÁLOGO, abrir modal completo en vez de marcar y olvidar
+                                if (btn.key === "nuevo") {
+                                  setModalCompletarNuevo({
+                                    lineaIdx: linea.idx,
+                                    plantilla: {
+                                      desc: linea.descripcionPersonalizada || linea.lineaOriginal.descripcion_original || "",
+                                      proveedores: { [linea.proveedorId]: {
+                                        ref: linea.lineaOriginal.referencia_proveedor || "",
+                                        bruto: linea.precioUnitarioBruto || 0,
+                                        dto: linea.descuento || 0,
+                                      }},
+                                      unidad: linea.lineaOriginal.unidad || "uni",
+                                    }
+                                  });
+                                } else {
+                                  updateLinea(linea.idx, { estado: btn.key });
+                                }
+                              }}
+                              className={`px-2 py-1 text-[10px] font-bold border ${estadoBtn(linea, btn.key)}`}>
+                              {btn.label}
+                            </button>
+                          ))}
+                          <button
+                            title="El producto sugerido por la IA está mal. Abre un buscador para elegir el correcto de tu catálogo."
+                            onClick={() => { setCambioIdx(cambioIdx === linea.idx ? null : linea.idx); setBusquedaCambio(""); }}
+                            className={`px-2 py-1 text-[10px] font-bold border ${cambioIdx === linea.idx ? "bg-violet-600 text-white border-stone-900" : "bg-white text-stone-700 border-stone-300 hover:border-violet-600 hover:text-violet-700"}`}>
+                            🔍 CAMBIAR PRODUCTO
+                          </button>
+                        </div>
+                      )}
 
-                      {/* Buscador de catálogo (cambiar producto) */}
+                      {/* Buscador de catálogo (cambiar producto) — con filtros y fotos */}
                       {cambioIdx === linea.idx && (
                         <div className="bg-violet-50 border-2 border-violet-600 p-2 space-y-2">
                           <div className="text-[9px] font-bold tracking-widest text-violet-800">BUSCAR PRODUCTO EN CATÁLOGO</div>
@@ -10699,27 +10844,66 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
                             onChange={(e) => setBusquedaCambio(e.target.value)}
                             placeholder="Descripción o referencia…"
                             className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:outline-none focus:bg-white" />
-                          <div className="max-h-48 overflow-y-auto border border-stone-200 bg-white">
+                          {/* Filtros de familia y tipo */}
+                          <div className="flex gap-2 flex-wrap items-center">
+                            <select
+                              value={filtroFamiliaCambio}
+                              onChange={(e) => setFiltroFamiliaCambio(e.target.value)}
+                              className="border border-stone-900 px-2 py-1 text-[11px] bg-white">
+                              <option value="">Todas las familias</option>
+                              {Array.from(new Set(CATALOGO.map(p => p.familia).filter(Boolean))).sort().map(f => (
+                                <option key={f} value={f}>{f}</option>
+                              ))}
+                            </select>
+                            <select
+                              value={filtroTipoCambio}
+                              onChange={(e) => setFiltroTipoCambio(e.target.value)}
+                              className="border border-stone-900 px-2 py-1 text-[11px] bg-white">
+                              <option value="">Todos los tipos</option>
+                              {getTiposPiezaActivos().slice().sort((a, b) => a.label.localeCompare(b.label)).map(t => (
+                                <option key={t.id} value={t.id}>{t.label}</option>
+                              ))}
+                            </select>
+                            {(filtroFamiliaCambio || filtroTipoCambio) && (
+                              <button
+                                onClick={() => { setFiltroFamiliaCambio(""); setFiltroTipoCambio(""); }}
+                                className="text-[10px] underline text-stone-700 hover:text-stone-900">
+                                limpiar filtros
+                              </button>
+                            )}
+                          </div>
+                          <div className="max-h-60 overflow-y-auto border border-stone-200 bg-white">
                             {(() => {
                               const q = norm(busquedaCambio).trim();
-                              const filtrados = q
-                                ? CATALOGO.filter(p =>
-                                    norm(p.desc).includes(q) ||
-                                    Object.values(p.proveedores || {}).some(pv => norm(pv?.ref).includes(q))
-                                  ).slice(0, 30)
-                                : [];
-                              if (!q) return <div className="p-2 text-[10px] text-stone-500 italic">Empieza a escribir para ver resultados…</div>;
+                              let filtrados = CATALOGO.slice();
+                              if (filtroFamiliaCambio) filtrados = filtrados.filter(p => p.familia === filtroFamiliaCambio);
+                              if (filtroTipoCambio) filtrados = filtrados.filter(p => detectarTipoPieza(p) === filtroTipoCambio);
+                              if (q) {
+                                filtrados = filtrados.filter(p =>
+                                  norm(p.desc).includes(q) ||
+                                  Object.values(p.proveedores || {}).some(pv => norm(pv?.ref).includes(q))
+                                );
+                              }
+                              filtrados = filtrados.slice(0, 40);
+                              if (!q && !filtroFamiliaCambio && !filtroTipoCambio) {
+                                return <div className="p-2 text-[10px] text-stone-500 italic">Escribe o filtra para buscar productos…</div>;
+                              }
                               if (filtrados.length === 0) return <div className="p-2 text-[10px] text-stone-500">Sin coincidencias</div>;
                               return filtrados.map(p => {
                                 const provThis = p.proveedores?.[linea.proveedorId];
                                 return (
                                   <button key={p.id}
                                     onClick={() => cambiarProducto(linea.idx, p.id)}
-                                    className="w-full text-left p-2 hover:bg-violet-100 border-b border-stone-100 last:border-b-0">
-                                    <div className="text-xs font-bold">{p.desc}</div>
-                                    <div className="text-[10px] text-stone-500">
-                                      {provThis ? <>ref: <span className="font-mono">{provThis.ref || "—"}</span> · €{provThis.bruto}{provThis.dto > 0 && ` (-${provThis.dto}%)`}</> : <span className="italic">sin datos para este proveedor</span>}
-                                      {p.familia && <span className="ml-2">· {p.familia}</span>}
+                                    className="w-full text-left p-2 hover:bg-violet-100 border-b border-stone-100 last:border-b-0 flex gap-2 items-start">
+                                    <div className="w-12 h-12 bg-white border border-stone-300 flex items-center justify-center shrink-0 overflow-hidden">
+                                      <ProductSVG type={imgTypeFromProducto(p)} />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="text-xs font-bold leading-tight">{p.desc}</div>
+                                      <div className="text-[10px] text-stone-500">
+                                        {provThis ? <>ref: <span className="font-mono">{provThis.ref || "—"}</span> · €{provThis.bruto}{provThis.dto > 0 && ` (-${provThis.dto}%)`}</> : <span className="italic">sin datos para este proveedor</span>}
+                                        {p.familia && <span className="ml-2">· {p.familia}</span>}
+                                      </div>
                                     </div>
                                   </button>
                                 );
@@ -10828,6 +11012,179 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
               )}
             </>
           )}
+        </div>
+      </div>
+
+      {/* Modal: completar datos de producto NUEVO antes de crearlo en el catálogo.
+          Se abre al pulsar "+ AÑADIR AL CATÁLOGO" o "❌ NO — es un PRODUCTO NUEVO".
+          Permite rellenar familia, tipo, foto, etc. en el momento, evitando que el
+          producto entre al catálogo con datos por defecto y haya que ir luego a
+          completarlo manualmente. */}
+      {modalCompletarNuevo && (
+        <ModalCompletarProductoNuevoFactura
+          plantilla={modalCompletarNuevo.plantilla}
+          onCancelar={() => setModalCompletarNuevo(null)}
+          onCrear={crearProductoCompleto}
+        />
+      )}
+    </div>
+  );
+}
+
+// =========================================================
+//  MODAL: COMPLETAR PRODUCTO NUEVO desde una factura
+// =========================================================
+// Pantalla para rellenar TODOS los datos de un producto nuevo que viene de una
+// factura, antes de crearlo en el catálogo. Recibe una `plantilla` con desc,
+// proveedores, unidad pre-rellenados de la factura. El admin puede ajustar y
+// añadir familia, tipo, nombre corto, foto, etc.
+function ModalCompletarProductoNuevoFactura({ plantilla, onCancelar, onCrear }) {
+  const [desc, setDesc] = useState(plantilla.desc || "");
+  const [nombreCorto, setNombreCorto] = useState("");
+  const [familia, setFamilia] = useState("Varios");
+  const [unidad, setUnidad] = useState(plantilla.unidad || "uni");
+  const [tipo, setTipo] = useState("");
+  const [img, setImg] = useState("");
+  const [creando, setCreando] = useState(false);
+
+  const handleCrear = async () => {
+    if (!desc.trim()) {
+      alert("La descripción es obligatoria");
+      return;
+    }
+    setCreando(true);
+    try {
+      await onCrear({
+        desc: desc.trim(),
+        nombreCorto: nombreCorto.trim() || null,
+        familia,
+        unidad,
+        tipo: tipo || null,
+        img: img || null,
+        proveedores: plantilla.proveedores || {},
+        cantidadPorUnidad: null,
+      });
+    } finally {
+      setCreando(false);
+    }
+  };
+
+  // Familias disponibles (mismas que en ModalEditarProducto)
+  const familiasDisponibles = FAMILIAS.filter(f => f.nombre !== "Todo");
+
+  return (
+    <div className="fixed inset-0 bg-black/70 z-[60] flex items-center justify-center p-4">
+      <div className="bg-white border-4 border-stone-900 max-w-2xl w-full shadow-[8px_8px_0_0_rgba(0,0,0,1)] max-h-[90vh] overflow-y-auto">
+        <div className="bg-blue-600 border-b-4 border-stone-900 px-4 py-3 flex items-center justify-between sticky top-0 z-10">
+          <div>
+            <h3 className="font-black text-lg text-white">🆕 NUEVO PRODUCTO DESDE FACTURA</h3>
+            <div className="text-[10px] text-blue-100 mt-0.5">Completa los datos antes de añadirlo al catálogo</div>
+          </div>
+          <button onClick={onCancelar} disabled={creando} className="text-white hover:text-blue-100 text-2xl leading-none">×</button>
+        </div>
+
+        <div className="p-4 space-y-3">
+          {/* Vista previa */}
+          <div className="flex items-center gap-3 bg-stone-50 border-2 border-stone-300 p-2">
+            <div className="w-20 h-20 bg-white border-2 border-stone-900 flex items-center justify-center shrink-0 overflow-hidden">
+              <ProductSVG
+                key={"preview:" + (img || "") + ":" + (tipo || "") + ":" + desc}
+                type={imgTypeFromProducto({ desc, familia, img, tipo })}
+              />
+            </div>
+            <div className="text-[10px] text-stone-600 leading-tight">
+              <div className="font-bold tracking-widest text-stone-700 mb-1">VISTA PREVIA</div>
+              <div>Lo que verá el operario al elegir este producto.</div>
+            </div>
+          </div>
+
+          <div>
+            <label className="text-[10px] tracking-widest font-bold text-stone-700 mb-1 block">DESCRIPCIÓN <span className="text-stone-500 normal-case font-normal">(la que ven proveedores y va en informes)</span></label>
+            <input type="text" value={desc} onChange={(e) => setDesc(e.target.value)}
+                   className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:bg-amber-50 focus:outline-none" />
+          </div>
+
+          <div>
+            <label className="text-[10px] tracking-widest font-bold text-stone-700 mb-1 block">NOMBRE CORTO <span className="text-stone-500 normal-case font-normal">(el que ve el operario en el catálogo, opcional)</span></label>
+            <input type="text" value={nombreCorto} onChange={(e) => setNombreCorto(e.target.value)}
+                   className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:bg-amber-50 focus:outline-none" />
+          </div>
+
+          <div>
+            <label className="text-[10px] tracking-widest font-bold text-stone-700 mb-1 block">
+              TIPO DE PIEZA <span className="font-normal opacity-60">(grupo del catálogo donde aparece)</span>
+            </label>
+            <select value={tipo} onChange={(e) => setTipo(e.target.value)}
+                    className="w-full border-2 border-stone-900 p-2 text-xs focus:bg-amber-50 focus:outline-none font-mono">
+              <option value="">🤖 Auto (detectar desde descripción)</option>
+              {getTiposPiezaActivos().slice().sort((a, b) => a.label.localeCompare(b.label)).map(t => (
+                <option key={t.id} value={t.id}>{t.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-[10px] tracking-widest font-bold text-stone-700 mb-1 block">FAMILIA</label>
+              <select value={familia} onChange={(e) => setFamilia(e.target.value)}
+                      className="w-full border-2 border-stone-900 p-2 text-xs focus:bg-amber-50 focus:outline-none font-mono">
+                {familiasDisponibles.map(f => (
+                  <option key={f.nombre} value={f.nombre}>{f.nombre}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] tracking-widest font-bold text-stone-700 mb-1 block">UNIDAD</label>
+              <select value={unidad} onChange={(e) => setUnidad(e.target.value)}
+                      className="w-full border-2 border-stone-900 p-2 text-xs focus:bg-amber-50 focus:outline-none font-mono">
+                <option value="uni">unidad</option>
+                <option value="rollo">rollo</option>
+                <option value="barra">barra</option>
+                <option value="m">metro</option>
+                <option value="kg">kilo</option>
+                <option value="L">litro</option>
+                <option value="caja">caja</option>
+                <option value="par">par</option>
+                <option value="día">día</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label className="text-[10px] tracking-widest font-bold text-stone-700 mb-1 block">
+              IMAGEN <span className="font-normal opacity-60">(opcional, déjalo vacío para autodetectar)</span>
+            </label>
+            <input type="text" value={img} onChange={(e) => setImg(e.target.value)}
+                   placeholder="ej: codo, valvula, mcap…"
+                   className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:bg-amber-50 focus:outline-none" />
+            <div className="text-[10px] text-stone-500 mt-1">
+              Puedes cambiar la foto luego desde la galería en el panel admin.
+            </div>
+          </div>
+
+          {/* Resumen del proveedor que viene de la factura */}
+          <div className="bg-amber-50 border-2 border-amber-700 p-2 text-[11px]">
+            <div className="font-bold tracking-widest text-amber-900 mb-1">DATOS DE LA FACTURA (no se editan aquí)</div>
+            {Object.entries(plantilla.proveedores || {}).map(([provId, datos]) => (
+              <div key={provId} className="text-stone-800">
+                Proveedor: <span className="font-mono font-bold">{provId}</span> ·
+                Ref: <span className="font-mono">{datos.ref || "—"}</span> ·
+                Precio: <span className="font-mono">€{datos.bruto?.toFixed(4) || "0"}</span>
+                {datos.dto > 0 && <> · Dto: {datos.dto}%</>}
+              </div>
+            ))}
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2 border-t border-stone-200">
+            <button onClick={onCancelar} disabled={creando}
+                    className="px-4 py-2 text-xs font-bold tracking-widest border-2 border-stone-900 hover:bg-stone-100">
+              CANCELAR
+            </button>
+            <button onClick={handleCrear} disabled={creando || !desc.trim()}
+                    className="bg-blue-600 text-white px-4 py-2 text-xs font-bold tracking-widest border-2 border-blue-700 hover:bg-blue-700 disabled:opacity-50">
+              {creando ? "CREANDO…" : "✓ CREAR PRODUCTO Y CONFIRMAR LÍNEA"}
+            </button>
+          </div>
         </div>
       </div>
     </div>
