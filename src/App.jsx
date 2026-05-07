@@ -1482,6 +1482,18 @@ const detectarTipoPieza = (texto) => {
 // Detecta el tipo visual de un producto. Si no hay foto del material exacto,
 // devolvemos un tipo que SVG sí dibuja (con el color del material correcto)
 // para que NO salga una foto de otro material por error.
+// Mapeo de imgs que son TUBOS (no piezas). Si un producto detectado como pieza
+// tiene uno de estos como img, ignorarlo y usar la detección automática.
+const IMGS_DE_TUBO = new Set(["cobre", "tubo-pex", "tubo-pe", "tubo-pvc", "mcap"]);
+
+// Tipos que claramente NO son tubos (son piezas)
+const TIPOS_PIEZA = new Set([
+  "codo", "te", "manguito", "machon", "valvula", "fitting", "racor",
+  "reduccion", "tapon", "filtro", "bateria", "abrazadera", "junta",
+  "brida", "grifo", "latiguillo", "soporte", "tornillo", "tenaza",
+  "lija", "espuma", "sellador", "cinta", "hilo", "aislamiento",
+]);
+
 const imgTypeFromProducto = (p) => {
   // ESTRATEGIA:
   // 1. Calcular qué tipo nos saldría por detección automática (mira material en desc + familia)
@@ -1489,8 +1501,18 @@ const imgTypeFromProducto = (p) => {
   //    PORQUE el `img` guardado puede ser un valor antiguo genérico ("codo") cuando
   //    en realidad es un "Codo cobre" o "Codo PVC".
   // 3. Si la detección no saca nada útil ("default"), entonces usar el `img` guardado como fallback.
+  // 4. CASO ESPECIAL: si el producto es claramente una pieza (codo, te...) pero el img guardado
+  //    es una foto de TUBO (cobre, tubo-pvc, etc.), descartar el img guardado y usar detección.
+  //    Esto arregla productos antiguos mal etiquetados de cuando solo había foto del tubo.
   const imgGuardado = p?.img;
   const detectado = detectarImg(p);
+  const tipoPieza = detectarTipoPieza(p?.desc || "");
+
+  // Caso especial: producto es pieza pero img es de tubo → confiar en detección
+  if (imgGuardado && IMGS_DE_TUBO.has(imgGuardado) && TIPOS_PIEZA.has(tipoPieza)) {
+    if (detectado && detectado !== "default") return detectado;
+  }
+
   if (detectado && detectado !== "default") return detectado;
   if (imgGuardado) return imgGuardado;
   return "default";
@@ -1576,7 +1598,7 @@ const detectarImg = (p) => {
   // === CODOS ===
   if (tipo === "codo") {
     if (esElectro) return "electro";        // SÍ hay foto
-    if (esCobre) return "codo";             // SVG (con color cobre por contexto) — no hay foto
+    if (esCobre) return "codo-18-3-4-h-h";  // foto subida por el admin de codo de cobre real
     if (esGalv) return "galv-codo";         // SÍ hay foto
     if (esPECompres) return "pe-codo";      // SÍ hay foto azul
     if (esPVC) return "codo-pvc";           // SÍ hay foto
@@ -1587,7 +1609,7 @@ const detectarImg = (p) => {
   // === TES ===
   if (tipo === "te") {
     if (esElectro) return "elec-te";        // SÍ hay foto
-    if (esCobre) return "te";               // SVG — no hay foto
+    if (esCobre) return "te";               // SVG — no hay foto (subir si tienes)
     if (esGalv) return "galv-te";           // SÍ hay foto
     if (esPECompres) return "pe-te";        // SÍ hay foto azul
     if (esPVC) return "te-pvc";             // SÍ hay foto
@@ -5504,26 +5526,19 @@ ${(datos.ejemplos || []).map(e => `  · ${e.nombreCorto}`).join("\n")}`);
               ...Array.from(TIPOS_CON_FOTO).sort().map(t => ({ val: t, label: t })),
             ];
             const guardar = async (nuevoImg) => {
-              console.log("[guardar img] producto:", p.id, "nuevoImg:", nuevoImg);
               try {
-                console.log("[guardar img] Llamando api.put...");
-                const resp = await api.put("/admin/producto/" + p.id, {
+                await api.put("/admin/producto/" + p.id, {
                   desc: p.desc, nombreCorto: p.nombreCorto || null,
                   familia: p.familia, unidad: p.unidad,
                   img: nuevoImg || null,
                   proveedores: p.proveedores,
                   cantidadPorUnidad: p.cantidadPorUnidad || null,
                 });
-                console.log("[guardar img] Respuesta OK:", resp);
                 setImgEditandoId(null);
-                // reload completo: refresca catálogo (productos con sus img actualizados)
+                // Refrescar catálogo y notificar a todos los SVG para re-render
                 await reload();
-                // Disparar evento para que TODOS los componentes ProductSVG re-rendericen
-                // (necesario porque el componente cachea su estado interno y la URL backend)
                 invalidarCacheImagenesBackend();
-                console.log("[guardar img] Reload completo, producto actualizado");
               } catch (e) {
-                console.error("[guardar img] ERROR:", e);
                 alert("Error al guardar: " + e.message);
               }
             };
