@@ -5463,18 +5463,13 @@ ${(datos.ejemplos || []).map(e => `  · ${e.nombreCorto}`).join("\n")}`);
             ];
             const guardar = async (nuevoImg) => {
               try {
-                const res = await fetch(`${BACKEND_URL}/${p.id}`, {
-                  method: "PATCH",
-                  headers: { "Content-Type": "application/json", "x-admin-pin": pin },
-                  body: JSON.stringify({
-                    desc: p.desc, nombreCorto: p.nombreCorto || null,
-                    familia: p.familia, unidad: p.unidad,
-                    img: nuevoImg || null,
-                    proveedores: p.proveedores,
-                    cantidadPorUnidad: p.cantidadPorUnidad || null,
-                  }),
+                await api.put("/admin/producto/" + p.id, {
+                  desc: p.desc, nombreCorto: p.nombreCorto || null,
+                  familia: p.familia, unidad: p.unidad,
+                  img: nuevoImg || null,
+                  proveedores: p.proveedores,
+                  cantidadPorUnidad: p.cantidadPorUnidad || null,
                 });
-                if (!res.ok) throw new Error(await res.text());
                 setImgEditandoId(null);
                 reload();
               } catch (e) {
