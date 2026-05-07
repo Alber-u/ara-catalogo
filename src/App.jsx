@@ -1504,27 +1504,13 @@ const TIPOS_PIEZA = new Set([
 ]);
 
 const imgTypeFromProducto = (p) => {
-  // ESTRATEGIA:
-  // 1. Calcular qué tipo nos saldría por detección automática (mira material en desc + familia)
-  // 2. Si la detección saca algo distinto al `img` guardado, preferir la detección,
-  //    PORQUE el `img` guardado puede ser un valor antiguo genérico ("codo") cuando
-  //    en realidad es un "Codo cobre" o "Codo PVC".
-  // 3. Si la detección no saca nada útil ("default"), entonces usar el `img` guardado como fallback.
-  // 4. CASO ESPECIAL: si el producto es claramente una pieza (codo, te...) pero el img guardado
-  //    es una foto de TUBO (cobre, tubo-pvc, etc.), descartar el img guardado y usar detección.
-  //    Esto arregla productos antiguos mal etiquetados de cuando solo había foto del tubo.
-  const imgGuardado = p?.img;
+  // PRIORIDAD: la elección manual del admin (campo `img` del producto) MANDA.
+  // Si no hay elección manual (`img` vacío o null), entonces autodetectar
+  // a partir de la descripción/familia. Si la detección no saca nada útil,
+  // usar "default" (SVG dibujado).
+  if (p?.img) return p.img;
   const detectado = detectarImg(p);
-  const tipoPieza = detectarTipoPieza(p?.desc || "");
-
-  // Caso especial: producto es pieza pero img es de tubo → confiar en detección
-  if (imgGuardado && IMGS_DE_TUBO.has(imgGuardado) && TIPOS_PIEZA.has(tipoPieza)) {
-    if (detectado && detectado !== "default") return detectado;
-  }
-
-  if (detectado && detectado !== "default") return detectado;
-  if (imgGuardado) return imgGuardado;
-  return "default";
+  return (detectado && detectado !== "default") ? detectado : "default";
 };
 
 // Detección pura desde la descripción + familia
