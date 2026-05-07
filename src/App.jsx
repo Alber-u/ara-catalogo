@@ -4914,6 +4914,7 @@ function PestañaProductos({ data, api, reload, pin }) {
   const [generandoNombres, setGenerandoNombres] = useState(false);
   // Filtros nuevos
   const [filtroFamilia, setFiltroFamilia] = useState("");
+  const [filtroTipo, setFiltroTipo] = useState("");
   const [filtroProveedor, setFiltroProveedor] = useState(""); // id del proveedor
   const [filtroProveedorModo, setFiltroProveedorModo] = useState("con"); // "con" | "sin"
   const [orden, setOrden] = useState("desc"); // desc | familia | precioAsc | precioDesc | recientes
@@ -5049,6 +5050,36 @@ function PestañaProductos({ data, api, reload, pin }) {
     return Array.from(set).sort();
   }, [data.productos]);
 
+  // Tipos de pieza únicos del catálogo, calculados con detectarTipoPieza
+  // (que respeta el `tipo` manual si está puesto, o lo deduce de la descripción).
+  // Cada elemento es { id, label, count } para mostrar nombre legible y conteo.
+  const tiposUnicos = useMemo(() => {
+    const etiquetas = {
+      fitting: "FITTINGS", valvula: "VÁLVULAS", machon: "MACHONES",
+      manguito: "MANGUITOS", racor: "RACORES", filtro: "FILTROS",
+      tuberia: "TUBERÍAS", reduccion: "REDUCCIONES", tapon: "TAPONES",
+      enlace: "ENLACES", tuerca: "TUERCAS", junta: "JUNTAS",
+      soporte: "SOPORTES", abrazadera: "ABRAZADERAS",
+      bateria: "BATERÍAS", grifo: "GRIFOS", lija: "LIJAS",
+      tornillo: "TORNILLERÍA", espuma: "ESPUMAS", sellador: "SELLADORES",
+      cinta: "CINTAS", brida: "BRIDAS", tenaza: "TENAZAS",
+      hilo: "HILOS / SELLADORES", conex: "CONEXIONES",
+      codo: "CODOS", te: "TES",
+    };
+    const counts = {};
+    (data.productos || []).forEach(p => {
+      const t = detectarTipoPieza(p);
+      counts[t] = (counts[t] || 0) + 1;
+    });
+    return Object.keys(counts)
+      .map(id => ({
+        id,
+        label: etiquetas[id] || id.toUpperCase().replace("ZZZ_", "").replace(/_/g, " "),
+        count: counts[id],
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [data.productos]);
+
   // Helper: tokeniza una descripción en palabras significativas (≥3 letras)
   const tokenizar = (s) => {
     if (!s) return new Set();
@@ -5178,6 +5209,12 @@ function PestañaProductos({ data, api, reload, pin }) {
       lista = lista.filter(p => p.familia === filtroFamilia);
     }
 
+    // Filtro por tipo de pieza (REDUCCIONES, MACHONES, etc.)
+    // Usa detectarTipoPieza que respeta el campo `tipo` manual si está puesto.
+    if (filtroTipo) {
+      lista = lista.filter(p => detectarTipoPieza(p) === filtroTipo);
+    }
+
     // Filtro por proveedor (con / sin)
     if (filtroProveedor) {
       lista = lista.filter(p => {
@@ -5210,12 +5247,12 @@ function PestañaProductos({ data, api, reload, pin }) {
     }
 
     return sorted;
-  }, [data.productos, busq, filtroFamilia, filtroProveedor, filtroProveedorModo, verDuplicados, productosConDuplicados, orden]);
+  }, [data.productos, busq, filtroFamilia, filtroTipo, filtroProveedor, filtroProveedorModo, verDuplicados, productosConDuplicados, orden]);
 
   const pendientes = (data.productosPendientes || []).filter(p => p.estado === "pendiente");
 
   // ¿Hay algún filtro activo? (para mostrar el botón "limpiar filtros")
-  const hayFiltrosActivos = busq || filtroFamilia || filtroProveedor || verDuplicados || orden !== "desc";
+  const hayFiltrosActivos = busq || filtroFamilia || filtroTipo || filtroProveedor || verDuplicados || orden !== "desc";
 
   // Handler para descartar un par como "no es duplicado"
   const handleDescartarPar = (idA, idB) => {
@@ -5297,6 +5334,17 @@ function PestañaProductos({ data, api, reload, pin }) {
               className="border border-stone-900 px-2 py-1 text-[11px] bg-white focus:outline-none focus:bg-amber-50">
               <option value="">Todas ({familiasUnicas.length})</option>
               {familiasUnicas.map(f => <option key={f} value={f}>{f}</option>)}
+            </select>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <label className="text-[9px] font-bold tracking-widest text-stone-700">TIPO:</label>
+            <select
+              value={filtroTipo}
+              onChange={(e) => setFiltroTipo(e.target.value)}
+              className="border border-stone-900 px-2 py-1 text-[11px] bg-white focus:outline-none focus:bg-amber-50">
+              <option value="">Todos ({tiposUnicos.length})</option>
+              {tiposUnicos.map(t => <option key={t.id} value={t.id}>{t.label} ({t.count})</option>)}
             </select>
           </div>
 
