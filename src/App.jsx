@@ -4871,6 +4871,15 @@ function PestañaProductos({ data, api, reload, pin }) {
   const [parFusion, setParFusion] = useState(null); // {a, b, score} cuando se está fusionando un par
   const [modoImagenes, setModoImagenes] = useState(false); // vista compacta para asignar imágenes en bulk
   const [imgEditandoId, setImgEditandoId] = useState(null); // id del producto cuya imagen se está cambiando
+  // Filtros del selector inferior de fotos
+  const [filtroFotos, setFiltroFotos] = useState(""); // texto búsqueda
+  const [filtroFotosCat, setFiltroFotosCat] = useState("sugeridas"); // "todas" | "sugeridas" | "tuyas"
+
+  // Reseteamos los filtros del selector cuando cambia el producto seleccionado o se cierra
+  useEffect(() => {
+    setFiltroFotos("");
+    setFiltroFotosCat("sugeridas");
+  }, [imgEditandoId]);
 
   // Imágenes subidas al backend (las del git/frontend van aparte en TIPOS_CON_FOTO)
   const [imagenesBackend, setImagenesBackend] = useState([]);
@@ -5478,39 +5487,96 @@ ${(datos.ejemplos || []).map(e => `  · ${e.nombreCorto}`).join("\n")}`);
             };
             return (
               <div className="fixed bottom-0 left-0 right-0 z-40 bg-stone-900 border-t-4 border-amber-400 p-3 shadow-2xl">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="text-amber-400 font-bold text-xs tracking-widest">
+                <div className="flex items-center justify-between mb-2 gap-2">
+                  <div className="text-amber-400 font-bold text-xs tracking-widest truncate">
                     ELIGE IMAGEN PARA: <span className="text-white">{p.desc}</span>
                   </div>
                   <button onClick={() => setImgEditandoId(null)}
-                          className="text-amber-400 hover:text-white text-xs font-bold">✕ CERRAR</button>
+                          className="text-amber-400 hover:text-white text-xs font-bold shrink-0">✕ CERRAR</button>
                 </div>
-                <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 xl:grid-cols-12 gap-1.5 max-h-[40vh] overflow-y-auto">
-                  {/* Botón "auto" primero */}
-                  <button onClick={() => guardar("")}
-                          className={`p-1 border-2 ${!p.img ? "border-amber-400 bg-amber-100" : "border-stone-600 bg-white hover:border-amber-400"} aspect-square flex flex-col items-center justify-center`}
-                          title="Modo automático (detecta desde la descripción)">
-                    <div className="text-2xl">🤖</div>
-                    <div className="text-[8px] font-bold text-stone-900">AUTO</div>
+
+                {/* Filtros rápidos */}
+                <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+                  <input
+                    type="text"
+                    placeholder="🔍 Buscar (ej: codo, valv, pe...)"
+                    value={filtroFotos}
+                    onChange={(e) => setFiltroFotos(e.target.value)}
+                    className="flex-1 min-w-[180px] text-xs bg-stone-800 text-white border-2 border-amber-400 px-2 py-1 placeholder-stone-400"
+                    autoFocus
+                  />
+                  <button onClick={() => setFiltroFotosCat("todas")}
+                          className={`text-[9px] font-bold tracking-widest px-2 py-1 border-2 ${filtroFotosCat === "todas" ? "bg-amber-400 border-amber-400 text-stone-900" : "bg-stone-800 border-stone-600 text-amber-400 hover:border-amber-400"}`}>
+                    TODAS
                   </button>
-                  {/* Una mini foto por cada tipo disponible (sistema + tuyas) */}
-                  {[
+                  <button onClick={() => setFiltroFotosCat("sugeridas")}
+                          className={`text-[9px] font-bold tracking-widest px-2 py-1 border-2 ${filtroFotosCat === "sugeridas" ? "bg-amber-400 border-amber-400 text-stone-900" : "bg-stone-800 border-stone-600 text-amber-400 hover:border-amber-400"}`}
+                          title="Solo las imágenes que coinciden con el tipo de pieza detectado">
+                    🎯 SUGERIDAS
+                  </button>
+                  <button onClick={() => setFiltroFotosCat("tuyas")}
+                          className={`text-[9px] font-bold tracking-widest px-2 py-1 border-2 ${filtroFotosCat === "tuyas" ? "bg-emerald-400 border-emerald-400 text-stone-900" : "bg-stone-800 border-stone-600 text-emerald-400 hover:border-emerald-400"}`}>
+                    ★ TUYAS
+                  </button>
+                </div>
+
+                {(() => {
+                  // Construir lista filtrada
+                  let lista = [
                     ...Array.from(TIPOS_CON_FOTO).sort().map(t => ({ tipo: t, origen: "git" })),
                     ...imagenesBackend.map(i => ({ tipo: i.nombre, origen: "backend" })),
-                  ].map(({ tipo, origen }) => (
-                    <button key={origen + ":" + tipo} onClick={() => guardar(tipo)}
-                            className={`p-0.5 border-2 ${p.img === tipo ? "border-amber-400 bg-amber-100" : (origen === "backend" ? "border-emerald-500 bg-white hover:border-amber-400" : "border-stone-600 bg-white hover:border-amber-400")} aspect-square flex flex-col items-center justify-center overflow-hidden relative`}
-                            title={tipo + (origen === "backend" ? " (subida por ti)" : "")}>
-                      {origen === "backend" && (
-                        <span className="absolute top-0 left-0 text-[6px] font-bold px-0.5 bg-emerald-500 text-white">★</span>
+                  ];
+                  // Filtro por categoría
+                  if (filtroFotosCat === "tuyas") {
+                    lista = lista.filter(i => i.origen === "backend");
+                  } else if (filtroFotosCat === "sugeridas") {
+                    // Sugerir las que coinciden con el tipo detectado del producto
+                    const tipoDetectado = imgTypeFromProducto({ desc: p.desc, familia: p.familia, img: "" });
+                    const tipoBase = detectarTipoPieza(p.desc || "");
+                    lista = lista.filter(i =>
+                      i.tipo === tipoDetectado ||
+                      i.tipo.includes(tipoBase) ||
+                      tipoBase.includes(i.tipo) ||
+                      // Misma familia detectada (codo, te, valvula...)
+                      (tipoBase && i.tipo.toLowerCase().includes(tipoBase.toLowerCase()))
+                    );
+                  }
+                  // Filtro por texto
+                  if (filtroFotos) {
+                    const q = filtroFotos.toLowerCase();
+                    lista = lista.filter(i => i.tipo.toLowerCase().includes(q));
+                  }
+                  return (
+                    <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 xl:grid-cols-12 gap-1.5 max-h-[40vh] overflow-y-auto">
+                      {/* Botón "auto" siempre primero (no se filtra) */}
+                      <button onClick={() => guardar("")}
+                              className={`p-1 border-2 ${!p.img ? "border-amber-400 bg-amber-100" : "border-stone-600 bg-white hover:border-amber-400"} aspect-square flex flex-col items-center justify-center`}
+                              title="Modo automático (detecta desde la descripción)">
+                        <div className="text-2xl">🤖</div>
+                        <div className="text-[8px] font-bold text-stone-900">AUTO</div>
+                      </button>
+                      {/* Imágenes filtradas */}
+                      {lista.map(({ tipo, origen }) => (
+                        <button key={origen + ":" + tipo} onClick={() => guardar(tipo)}
+                                className={`p-0.5 border-2 ${p.img === tipo ? "border-amber-400 bg-amber-100" : (origen === "backend" ? "border-emerald-500 bg-white hover:border-amber-400" : "border-stone-600 bg-white hover:border-amber-400")} aspect-square flex flex-col items-center justify-center overflow-hidden relative`}
+                                title={tipo + (origen === "backend" ? " (subida por ti)" : "")}>
+                          {origen === "backend" && (
+                            <span className="absolute top-0 left-0 text-[6px] font-bold px-0.5 bg-emerald-500 text-white">★</span>
+                          )}
+                          <div className="w-full h-3/4 flex items-center justify-center">
+                            <ProductSVG type={tipo} />
+                          </div>
+                          <div className="text-[7px] font-bold text-stone-700 truncate w-full text-center mt-0.5">{tipo}</div>
+                        </button>
+                      ))}
+                      {lista.length === 0 && (
+                        <div className="col-span-full text-center text-stone-400 text-xs py-4 italic">
+                          Ninguna imagen coincide con "{filtroFotos}". Prueba con otro término o pulsa TODAS.
+                        </div>
                       )}
-                      <div className="w-full h-3/4 flex items-center justify-center">
-                        <ProductSVG type={tipo} />
-                      </div>
-                      <div className="text-[7px] font-bold text-stone-700 truncate w-full text-center mt-0.5">{tipo}</div>
-                    </button>
-                  ))}
-                </div>
+                    </div>
+                  );
+                })()}
               </div>
             );
           })()}
