@@ -3744,16 +3744,20 @@ function CatalogoApp({ usuario, onLogout }) {
             Cabeceras prominentes y siempre visibles para orientar al operario en móvil.
             Sticky para que se queden pegadas arriba al hacer scroll. */}
         {(() => {
-          // Agrupar productos por tipo manteniendo el orden ya calculado
+          // Agrupar productos por tipo MANTENIENDO el orden general de la lista pero
+          // SIN duplicar cabeceras. La primera vez que aparece un tipo se crea el
+          // grupo en su posición; las siguientes apariciones de ese mismo tipo se
+          // acumulan al grupo ya creado. Así no se rompe en cabeceras repetidas
+          // cuando los productos no vienen ordenados por tipo (ej: ordenados por medida).
           const grupos = [];
-          let actual = null;
+          const indiceGrupo = {};
           for (const p of productos) {
             const tipo = detectarTipoPieza(p);
-            if (actual && actual.tipo === tipo) {
-              actual.items.push(p);
+            if (indiceGrupo[tipo] !== undefined) {
+              grupos[indiceGrupo[tipo]].items.push(p);
             } else {
-              actual = { tipo, items: [p] };
-              grupos.push(actual);
+              indiceGrupo[tipo] = grupos.length;
+              grupos.push({ tipo, items: [p] });
             }
           }
           // Etiquetas más legibles para los tipos
