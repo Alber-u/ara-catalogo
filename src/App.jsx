@@ -43,6 +43,20 @@ async function cargarDatosBackend() {
     datosCargados = true;
     errorBackend = null;
     console.log("[ARA] Datos cargados desde backend:", CATALOGO.length, "productos,", OBRAS.length, "obras,", OPERARIOS.length, "operarios");
+    // Cargar tipos de pieza (lista editable). Endpoint público.
+    // Si falla, detectarTipoPieza usará el TIPOS_PIEZA_FALLBACK hardcoded.
+    try {
+      const rt = await fetch(BACKEND_URL + "/tipos");
+      if (rt.ok) {
+        const tipos = await rt.json();
+        if (Array.isArray(tipos) && tipos.length > 0) {
+          setTiposPiezaCache(tipos);
+          console.log("[ARA] Tipos de pieza cargados:", tipos.length);
+        }
+      }
+    } catch (e) {
+      console.warn("[ARA] No se cargaron tipos del backend, usando fallback:", e.message);
+    }
   } catch (e) {
     console.warn("[ARA] No se pudo cargar del backend, usando datos locales:", e.message);
     CATALOGO = CATALOGO_SEED;
@@ -1427,67 +1441,88 @@ const norm = (s) => (s || "")
   .replace(/[\u0300-\u036f]/g, "");
 
 // Detecta el tipo de pieza al inicio del nombre (codo, te, machón, fitting, válvula, etc.)
+// LISTA DINÁMICA DE TIPOS DE PIEZA
+// Se carga desde el backend en useTiposPieza() y se actualiza aquí.
+// Si está vacía (backend no responde), se usa el fallback hardcoded de abajo.
+// Como detectarTipoPieza() es una función pura sin acceso a React state, leemos
+// esta lista module-level para no tener que pasarla por props a 7 sitios distintos.
+let _tiposPieza = null;
+const setTiposPiezaCache = (lista) => {
+  _tiposPieza = (Array.isArray(lista) && lista.length > 0) ? lista : null;
+};
+
+// Fallback para cuando el backend no ha respondido todavía o falla.
+// Es la misma lista que se siembra en el backend la primera vez (SEED.tiposPieza).
+const TIPOS_PIEZA_FALLBACK = [
+  { id: "fitting",    label: "FITTINGS",          keywords: ["fitting"] },
+  { id: "valvula",    label: "VÁLVULAS",          keywords: ["válvula", "valvula"] },
+  { id: "machon",     label: "MACHONES",          keywords: ["machón", "machon"] },
+  { id: "manguito",   label: "MANGUITOS",         keywords: ["manguito"] },
+  { id: "racor",      label: "RACORES",           keywords: ["racor"] },
+  { id: "filtro",     label: "FILTROS",           keywords: ["filtro"] },
+  { id: "tuberia",    label: "TUBERÍAS",          keywords: ["tubería", "tuberia", "tubo"] },
+  { id: "reduccion",  label: "REDUCCIONES",       keywords: ["reducción", "reduccion", "reduc", "reductor"] },
+  { id: "tapon",      label: "TAPONES",           keywords: ["tapón", "tapon"] },
+  { id: "enlace",     label: "ENLACES",           keywords: ["enlace"] },
+  { id: "tuerca",     label: "TUERCAS",           keywords: ["tuerca"] },
+  { id: "junta",      label: "JUNTAS",            keywords: ["junta"] },
+  { id: "soporte",    label: "SOPORTES",          keywords: ["soporte"] },
+  { id: "abrazadera", label: "ABRAZADERAS",       keywords: ["abrazadera"] },
+  { id: "bateria",    label: "BATERÍAS",          keywords: ["batería", "bateria", "bat", "bts"] },
+  { id: "grifo",      label: "GRIFOS",            keywords: ["grifo"] },
+  { id: "lija",       label: "LIJAS",             keywords: ["lija"] },
+  { id: "tornillo",   label: "TORNILLERÍA",       keywords: ["tornillo"] },
+  { id: "espuma",     label: "ESPUMAS",           keywords: ["espuma"] },
+  { id: "sellador",   label: "SELLADORES",        keywords: ["sellador"] },
+  { id: "cinta",      label: "CINTAS",            keywords: ["cinta"] },
+  { id: "brida",      label: "BRIDAS",            keywords: ["brida"] },
+  { id: "tenaza",     label: "TENAZAS",           keywords: ["tenaza"] },
+  { id: "hilo",       label: "HILOS / SELLADORES", keywords: ["hilo"] },
+  { id: "conex",      label: "CONEXIONES",        keywords: ["conex"] },
+  { id: "codo",       label: "CODOS",             keywords: ["codo"] },
+  { id: "te",         label: "TES",               keywords: ["te"] }
+];
+
+const getTiposPiezaActivos = () => _tiposPieza || TIPOS_PIEZA_FALLBACK;
+
+// Helper: ¿alguna keyword del tipo matchea con la descripción?
+// Ignora tildes, mayúsculas y usa límites de palabra (\b) para evitar falsos
+// positivos como que "te" matchee dentro de "tornillo".
+const _normalizarParaMatch = (s) => (s || "")
+  .toString().toLowerCase()
+  .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+const _matcheaKeyword = (descNormalizada, kw) => {
+  const k = _normalizarParaMatch(kw);
+  if (!k) return false;
+  // Construir regex con límite de palabra. Escapar caracteres especiales por si acaso.
+  const escaped = k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp("\\b" + escaped + "\\b", "i").test(descNormalizada);
+};
+
 // PRIORIDAD: si recibe un OBJETO producto con campo `tipo` puesto, lo respeta.
-// Si recibe un STRING (descripción suelta) o un producto sin `tipo`, autodetecta.
-// Devuelve un canonical lowercase para agrupar variantes ortográficas (ó/o, í/i…).
-// Si no encuentra tipo conocido, devuelve "zzz_<primera-palabra>" para que vayan al final.
+// Si recibe un STRING (descripción suelta) o un producto sin `tipo`, autodetecta
+// recorriendo la lista de tipos del backend (con fallback hardcoded si no hay).
+// El primer tipo cuya keyword matchee con la descripción gana.
+// Si ninguno matchea, devuelve "zzz_<primera-palabra>" para que vayan al final.
 const detectarTipoPieza = (entrada) => {
-  // Si nos pasan un producto con tipo manual, eso manda
+  // Tipo manual del producto = palabra final
   if (entrada && typeof entrada === "object" && entrada.tipo) {
     return entrada.tipo;
   }
-  // Si es un objeto producto sin tipo, sacar la descripción
   const texto = (entrada && typeof entrada === "object") ? (entrada.desc || "") : entrada;
   if (!texto) return "zzz_otro";
   const lower = texto.toLowerCase().trim();
-
-  // Abreviaturas frecuentes en facturas (BAT/BTS = batería, etc.)
-  // Estas se prueban primero porque suelen ir al inicio.
-  const abreviaturas = [
-    { canonical: "bateria",  regex: /\b(?:BAT|BTS)\b/i },
-  ];
-  for (const t of abreviaturas) {
-    if (t.regex.test(lower)) return t.canonical;
-  }
-
-  // Tipos en orden de PRIORIDAD (más específico primero, más genérico después).
-  // Orden importa: "Fitting latón codo" debe matchear como "fitting" no como "codo".
-  const tipos = [
-    { canonical: "fitting",     regex: /\bfitting\b/i },
-    { canonical: "valvula",     regex: /\bv[áa]lvula\b/i },
-    { canonical: "machon",      regex: /\bmach[óo]n\b/i },
-    { canonical: "manguito",    regex: /\bmanguito\b/i },
-    { canonical: "racor",       regex: /\bracor\b/i },
-    { canonical: "filtro",      regex: /\bfiltro\b/i },
-    { canonical: "tuberia",     regex: /\btub(?:er[íi]a|o)\b/i },
-    { canonical: "reduccion",   regex: /\breducci[óo]n\b/i },
-    { canonical: "tapon",       regex: /\btap[óo]n\b/i },
-    { canonical: "enlace",      regex: /\benlace\b/i },
-    { canonical: "tuerca",      regex: /\btuerca\b/i },
-    { canonical: "junta",       regex: /\bjunta\b/i },
-    { canonical: "soporte",     regex: /\bsoporte\b/i },
-    { canonical: "abrazadera",  regex: /\babrazadera\b/i },
-    { canonical: "bateria",     regex: /\bbater[íi]a\b/i },
-    { canonical: "grifo",       regex: /\bgrifo\b/i },
-    { canonical: "lija",        regex: /\blija\b/i },
-    { canonical: "tornillo",    regex: /\btornillo\b/i },
-    { canonical: "espuma",      regex: /\bespuma\b/i },
-    { canonical: "sellador",    regex: /\bsellador\b/i },
-    { canonical: "cinta",       regex: /\bcinta\b/i },
-    { canonical: "brida",       regex: /\bbrida\b/i },
-    { canonical: "tenaza",      regex: /\btenaza\b/i },
-    { canonical: "hilo",        regex: /\bhilo\b/i },
-    { canonical: "conex",       regex: /\bconex\b/i },
-    // Genéricos al final
-    { canonical: "codo",        regex: /\bcodo\b/i },
-    { canonical: "te",          regex: /(?:^|\s)t[ée]\b/i },
-  ];
-
+  const norm = _normalizarParaMatch(lower);
+  // Recorrer tipos en orden — el primero que matchee gana
+  const tipos = getTiposPiezaActivos();
   for (const t of tipos) {
-    if (t.regex.test(lower)) return t.canonical;
+    if (!t.keywords || t.keywords.length === 0) continue;
+    for (const kw of t.keywords) {
+      if (_matcheaKeyword(norm, kw)) return t.id;
+    }
   }
-
-  // Si nada coincide, usar la primera palabra (sin prefijos cortos como "LT", "PVC")
+  // Sin match: autoagrupar por primera palabra significativa
   const primera = lower.replace(/^[a-z]{1,4}\s+/i, "").split(/\s+/)[0];
   return "zzz_" + (primera || "otro");
 };
@@ -4432,6 +4467,11 @@ function PanelAdmin({ pin, onSalir }) {
       if (Array.isArray(all?.productos)) {
         CATALOGO = all.productos;
       }
+      // Propagar la lista de tipos de pieza editable a la cache module-level.
+      // Así detectarTipoPieza la usa inmediatamente sin esperar otro fetch.
+      if (Array.isArray(all?.tiposPieza)) {
+        setTiposPiezaCache(all.tiposPieza);
+      }
     } catch (e) {
       console.error(e);
     } finally {
@@ -4452,6 +4492,7 @@ function PanelAdmin({ pin, onSalir }) {
   const pestañas = [
     { id: "resumen",   nombre: "RESUMEN",  icon: "📊" },
     { id: "productos", nombre: "PRODUCTOS", icon: "📦" },
+    { id: "tipos",     nombre: "TIPOS",    icon: "🏷️" },
     { id: "obras",     nombre: "OBRAS",    icon: "🏗" },
     { id: "operarios",  nombre: "OPERARIOS",  icon: "👷" },
     { id: "proveedores",nombre: "PROVEEDORES", icon: "🏢" },
@@ -4508,6 +4549,7 @@ function PanelAdmin({ pin, onSalir }) {
       <div className="max-w-7xl mx-auto p-4">
         {pestaña === "resumen"   && <PestañaResumen data={data} api={api} reload={recargarTodo} setPestaña={setPestaña} />}
         {pestaña === "productos" && <PestañaProductos data={data} api={api} reload={recargarTodo} pin={pin} />}
+        {pestaña === "tipos"     && <PestañaTipos data={data} api={api} reload={recargarTodo} />}
         {pestaña === "obras"     && <PestañaObras data={data} api={api} reload={recargarTodo} />}
         {pestaña === "operarios" && <PestañaOperarios data={data} api={api} reload={recargarTodo} />}
         {pestaña === "proveedores" && <PestañaProveedores data={data} api={api} reload={recargarTodo} />}
@@ -5054,18 +5096,13 @@ function PestañaProductos({ data, api, reload, pin }) {
   // (que respeta el `tipo` manual si está puesto, o lo deduce de la descripción).
   // Cada elemento es { id, label, count } para mostrar nombre legible y conteo.
   const tiposUnicos = useMemo(() => {
-    const etiquetas = {
-      fitting: "FITTINGS", valvula: "VÁLVULAS", machon: "MACHONES",
-      manguito: "MANGUITOS", racor: "RACORES", filtro: "FILTROS",
-      tuberia: "TUBERÍAS", reduccion: "REDUCCIONES", tapon: "TAPONES",
-      enlace: "ENLACES", tuerca: "TUERCAS", junta: "JUNTAS",
-      soporte: "SOPORTES", abrazadera: "ABRAZADERAS",
-      bateria: "BATERÍAS", grifo: "GRIFOS", lija: "LIJAS",
-      tornillo: "TORNILLERÍA", espuma: "ESPUMAS", sellador: "SELLADORES",
-      cinta: "CINTAS", brida: "BRIDAS", tenaza: "TENAZAS",
-      hilo: "HILOS / SELLADORES", conex: "CONEXIONES",
-      codo: "CODOS", te: "TES",
-    };
+    // Etiquetas vienen de la lista editable del backend (data.tiposPieza).
+    // Si por alguna razón no está, usamos el fallback hardcoded.
+    const tiposLista = Array.isArray(data.tiposPieza) && data.tiposPieza.length > 0
+      ? data.tiposPieza
+      : getTiposPiezaActivos();
+    const etiquetas = {};
+    tiposLista.forEach(t => { etiquetas[t.id] = t.label; });
     const counts = {};
     (data.productos || []).forEach(p => {
       const t = detectarTipoPieza(p);
@@ -5078,7 +5115,7 @@ function PestañaProductos({ data, api, reload, pin }) {
         count: counts[id],
       }))
       .sort((a, b) => a.label.localeCompare(b.label));
-  }, [data.productos]);
+  }, [data.productos, data.tiposPieza]);
 
   // Helper: tokeniza una descripción en palabras significativas (≥3 letras)
   const tokenizar = (s) => {
@@ -6704,33 +6741,25 @@ function ModalEditarProducto({ producto, api, reload, onCerrar, plantillaInicial
             <select value={tipo} onChange={(e) => setTipo(e.target.value)}
                     className="w-full border-2 border-stone-900 p-2 text-xs focus:bg-amber-50 focus:outline-none font-mono">
               <option value="">🤖 Auto (detectar desde descripción)</option>
-              <option value="abrazadera">ABRAZADERAS</option>
-              <option value="bateria">BATERÍAS</option>
-              <option value="brida">BRIDAS</option>
-              <option value="cinta">CINTAS</option>
-              <option value="codo">CODOS</option>
-              <option value="conex">CONEXIONES</option>
-              <option value="enlace">ENLACES</option>
-              <option value="espuma">ESPUMAS</option>
-              <option value="filtro">FILTROS</option>
-              <option value="fitting">FITTINGS</option>
-              <option value="grifo">GRIFOS</option>
-              <option value="hilo">HILOS / SELLADORES</option>
-              <option value="junta">JUNTAS</option>
-              <option value="lija">LIJAS</option>
-              <option value="machon">MACHONES</option>
-              <option value="manguito">MANGUITOS</option>
-              <option value="racor">RACORES</option>
-              <option value="reduccion">REDUCCIONES</option>
-              <option value="sellador">SELLADORES</option>
-              <option value="soporte">SOPORTES</option>
-              <option value="tapon">TAPONES</option>
-              <option value="te">TES</option>
-              <option value="tenaza">TENAZAS</option>
-              <option value="tornillo">TORNILLERÍA</option>
-              <option value="tuberia">TUBERÍAS</option>
-              <option value="tuerca">TUERCAS</option>
-              <option value="valvula">VÁLVULAS</option>
+              {/* Lista dinámica de tipos: viene del backend (gestionable desde
+                  la pestaña TIPOS del admin). Si la lista actual del producto
+                  apunta a un tipo que ya no existe, se sigue mostrando arriba
+                  como "(antiguo)" para no perder la asignación al editar. */}
+              {(() => {
+                const tipos = getTiposPiezaActivos();
+                const ids = new Set(tipos.map(t => t.id));
+                const opciones = [...tipos].sort((a, b) => a.label.localeCompare(b.label));
+                return (
+                  <>
+                    {tipo && !ids.has(tipo) && (
+                      <option value={tipo}>{tipo.toUpperCase()} (antiguo, no en lista)</option>
+                    )}
+                    {opciones.map(t => (
+                      <option key={t.id} value={t.id}>{t.label}</option>
+                    ))}
+                  </>
+                );
+              })()}
             </select>
           </div>
 
@@ -6951,6 +6980,236 @@ function ModalEditarProducto({ producto, api, reload, onCerrar, plantillaInicial
                     }`}
                     style={{ fontFamily: "'Archivo Black', Impact, sans-serif" }}>
               {guardando ? "GUARDANDO…" : esValidacion ? "✓ VALIDAR Y AÑADIR" : "💾 GUARDAR"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// =========================================================
+//  PESTAÑA TIPOS DE PIEZA — gestión de los agrupadores del catálogo
+// =========================================================
+function PestañaTipos({ data, api, reload }) {
+  const [añadiendo, setAñadiendo] = useState(false);
+  const [editando, setEditando] = useState(null);
+  const [guardando, setGuardando] = useState(false);
+
+  const tipos = data.tiposPieza || [];
+
+  // Conteo de productos por tipo (para mostrar cuántos productos usa cada tipo)
+  const conteos = useMemo(() => {
+    const c = {};
+    (data.productos || []).forEach(p => {
+      const t = detectarTipoPieza(p);
+      c[t] = (c[t] || 0) + 1;
+    });
+    return c;
+  }, [data.productos]);
+
+  // Productos que no encajan en ningún tipo definido (autoagrupados con "zzz_")
+  const sinTipo = useMemo(() => {
+    return Object.keys(conteos)
+      .filter(k => k.startsWith("zzz_"))
+      .map(k => ({ id: k, label: k.replace("zzz_", "").toUpperCase(), count: conteos[k] }))
+      .sort((a, b) => b.count - a.count);
+  }, [conteos]);
+
+  const handleBorrar = async (id) => {
+    if (!confirm(`¿Borrar el tipo "${id}"? Los productos que lo tengan asignado manualmente lo conservarán como "antiguo", y los productos sin asignación manual volverán a autodetectarse.`)) return;
+    setGuardando(true);
+    try {
+      await api.del(`/admin/tipo/${id}`);
+      await reload();
+    } catch (e) {
+      alert("Error al borrar: " + e.message);
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Cabecera */}
+      <div className="bg-amber-500 border-2 border-stone-900 p-3 shadow-[4px_4px_0_0_rgba(0,0,0,1)]">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <h2 className="font-black text-xl tracking-tight">TIPOS DE PIEZA</h2>
+            <p className="text-xs text-stone-800 mt-1 max-w-xl">
+              Gestiona los grupos del catálogo (REDUCCIONES, MACHONES, etc.) y las palabras clave
+              que clasifican automáticamente los productos. El primer tipo cuya palabra clave coincida con la descripción gana.
+            </p>
+          </div>
+          <button onClick={() => setAñadiendo(true)}
+                  className="bg-stone-900 text-amber-400 px-4 py-2 text-xs font-bold tracking-widest border-2 border-stone-900 hover:bg-stone-800">
+            + AÑADIR TIPO
+          </button>
+        </div>
+      </div>
+
+      {/* Aviso si hay productos sin clasificar */}
+      {sinTipo.length > 0 && (
+        <div className="bg-rose-50 border-2 border-rose-700 p-3">
+          <div className="text-[10px] tracking-widest font-bold text-rose-900 mb-2">
+            ⚠️ {sinTipo.length} GRUPO{sinTipo.length > 1 ? "S" : ""} AUTOAGRUPADO{sinTipo.length > 1 ? "S" : ""} (sin tipo definido)
+          </div>
+          <div className="text-[11px] text-rose-900 mb-2">
+            Estos productos no encajan en ningún tipo de los definidos. Para limpiarlos: añade un tipo nuevo con
+            la palabra clave correspondiente, o asigna el tipo manualmente desde la ficha del producto.
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {sinTipo.map(s => (
+              <span key={s.id} className="bg-rose-700 text-white text-[10px] px-2 py-1 font-mono font-bold">
+                {s.label} ({s.count})
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Tabla de tipos */}
+      <div className="bg-white border-2 border-stone-900 overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead className="bg-stone-900 text-amber-400">
+            <tr>
+              <th className="p-2 text-left">ID</th>
+              <th className="p-2 text-left">NOMBRE VISIBLE</th>
+              <th className="p-2 text-left">PALABRAS CLAVE</th>
+              <th className="p-2 text-right">PRODUCTOS</th>
+              <th className="p-2"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {tipos.length === 0 && (
+              <tr><td colSpan={5} className="p-4 text-center text-stone-500">No hay tipos definidos</td></tr>
+            )}
+            {tipos.map(t => (
+              <tr key={t.id} className="hover:bg-amber-50 border-t border-stone-200">
+                <td className="p-2 font-mono text-[10px] text-stone-500">{t.id}</td>
+                <td className="p-2 font-bold">{t.label}</td>
+                <td className="p-2">
+                  <div className="flex flex-wrap gap-1">
+                    {(t.keywords || []).map((k, i) => (
+                      <span key={i} className="bg-stone-100 border border-stone-300 px-1.5 py-0.5 text-[10px] font-mono">{k}</span>
+                    ))}
+                    {(!t.keywords || t.keywords.length === 0) && (
+                      <span className="text-[10px] text-stone-400 italic">sin palabras clave</span>
+                    )}
+                  </div>
+                </td>
+                <td className="p-2 text-right font-mono">{conteos[t.id] || 0}</td>
+                <td className="p-2 text-right whitespace-nowrap">
+                  <button onClick={() => setEditando(t)} disabled={guardando}
+                          className="bg-stone-900 text-amber-400 px-2 py-1 text-[10px] font-bold tracking-widest hover:bg-stone-800 disabled:opacity-50 mr-1">
+                    EDITAR
+                  </button>
+                  <button onClick={() => handleBorrar(t.id)} disabled={guardando}
+                          className="bg-red-600 text-white px-2 py-1 text-[10px] font-bold tracking-widest hover:bg-red-700 disabled:opacity-50">
+                    BORRAR
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {(añadiendo || editando) && (
+        <ModalEditarTipo
+          tipo={editando}
+          api={api}
+          onCerrar={() => { setAñadiendo(false); setEditando(null); }}
+          onGuardado={() => { setAñadiendo(false); setEditando(null); reload(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// Modal para crear o editar un tipo de pieza
+function ModalEditarTipo({ tipo, api, onCerrar, onGuardado }) {
+  const esNuevo = !tipo;
+  const [id, setId] = useState(tipo?.id || "");
+  const [label, setLabel] = useState(tipo?.label || "");
+  const [keywordsTexto, setKeywordsTexto] = useState((tipo?.keywords || []).join(", "));
+  const [guardando, setGuardando] = useState(false);
+  const [error, setError] = useState(null);
+
+  const handleGuardar = async () => {
+    setError(null);
+    const idLimpio = id.trim().toLowerCase().replace(/\s+/g, "_");
+    const labelLimpio = label.trim();
+    if (!idLimpio || !labelLimpio) {
+      setError("ID y nombre visible son obligatorios.");
+      return;
+    }
+    const keywords = keywordsTexto.split(",").map(s => s.trim()).filter(Boolean);
+    setGuardando(true);
+    try {
+      if (esNuevo) {
+        await api.post("/admin/tipo", { id: idLimpio, label: labelLimpio, keywords });
+      } else {
+        await api.put(`/admin/tipo/${tipo.id}`, { label: labelLimpio, keywords });
+      }
+      onGuardado();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+      <div className="bg-white border-4 border-stone-900 max-w-lg w-full shadow-[8px_8px_0_0_rgba(0,0,0,1)]">
+        <div className="bg-amber-500 border-b-4 border-stone-900 px-4 py-2 flex items-center justify-between">
+          <h3 className="font-black text-lg">{esNuevo ? "NUEVO TIPO" : "EDITAR TIPO"}</h3>
+          <button onClick={onCerrar} className="text-stone-900 hover:text-stone-600 text-2xl leading-none">×</button>
+        </div>
+        <div className="p-4 space-y-3">
+          <div>
+            <label className="text-[10px] tracking-widest font-bold text-stone-700 mb-1 block">
+              ID INTERNO <span className="font-normal opacity-60">(minúsculas, sin espacios — no se puede cambiar después)</span>
+            </label>
+            <input type="text" value={id} disabled={!esNuevo}
+                   onChange={(e) => setId(e.target.value)}
+                   placeholder="ej: purgador"
+                   className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:bg-amber-50 focus:outline-none disabled:bg-stone-100 disabled:text-stone-500" />
+          </div>
+          <div>
+            <label className="text-[10px] tracking-widest font-bold text-stone-700 mb-1 block">
+              NOMBRE VISIBLE <span className="font-normal opacity-60">(lo que se ve como cabecera del grupo)</span>
+            </label>
+            <input type="text" value={label}
+                   onChange={(e) => setLabel(e.target.value)}
+                   placeholder="ej: PURGADORES"
+                   className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:bg-amber-50 focus:outline-none" />
+          </div>
+          <div>
+            <label className="text-[10px] tracking-widest font-bold text-stone-700 mb-1 block">
+              PALABRAS CLAVE <span className="font-normal opacity-60">(separadas por comas, ignoran tildes y mayúsculas)</span>
+            </label>
+            <textarea value={keywordsTexto}
+                      onChange={(e) => setKeywordsTexto(e.target.value)}
+                      placeholder="ej: purgador, purga, purgadores"
+                      rows={2}
+                      className="w-full border-2 border-stone-900 p-2 text-xs font-mono focus:bg-amber-50 focus:outline-none" />
+            <div className="text-[10px] text-stone-500 mt-1">
+              Cualquier producto cuya descripción contenga alguna de estas palabras se clasificará automáticamente en este tipo.
+            </div>
+          </div>
+          {error && (
+            <div className="bg-red-50 border-2 border-red-700 p-2 text-[11px] text-red-900">{error}</div>
+          )}
+          <div className="flex justify-end gap-2 pt-2">
+            <button onClick={onCerrar} disabled={guardando}
+                    className="px-4 py-2 text-xs font-bold tracking-widest border-2 border-stone-900 hover:bg-stone-100">
+              CANCELAR
+            </button>
+            <button onClick={handleGuardar} disabled={guardando}
+                    className="bg-stone-900 text-amber-400 px-4 py-2 text-xs font-bold tracking-widest border-2 border-stone-900 hover:bg-stone-800 disabled:opacity-50">
+              {guardando ? "GUARDANDO…" : "GUARDAR"}
             </button>
           </div>
         </div>
