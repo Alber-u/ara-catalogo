@@ -8009,6 +8009,15 @@ function PestañaFacturas({ api, pin }) {
         {(() => {
           // Aplicar filtros
           const q = norm(busqueda).trim();
+          // normalizarProv: misma definición que en el IIFE de arriba. Está
+          // duplicada porque ambos IIFE son scopes independientes y este la
+          // necesita para que el filtro de proveedor matchee variantes.
+          const normalizarProv = (s) => (s || "")
+            .toLowerCase()
+            .normalize("NFD").replace(/[̀-ͯ]/g, "")
+            .replace(/[.,]/g, "")
+            .replace(/\s+/g, " ")
+            .trim();
           const facturasFiltradas = facturas.filter(f => {
             if (filtroEstado !== "todos" && f.estado !== filtroEstado) return false;
             // El filtro de proveedor compara por nombre NORMALIZADO (sin tildes, mayúsculas, etc.)
