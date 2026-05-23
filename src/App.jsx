@@ -4,11 +4,12 @@ import {
   Boxes, Construction, Check, Trophy,
   User, LogOut, AlertCircle
 } from "lucide-react";
+import { BACKEND_HOST, CATALOGO_BASE, FACTURAS_BASE } from "./lib/api.js";
 
 // =========================================================
 //  Conexión con el backend (araujo-bot/api/catalogo)
 // =========================================================
-const BACKEND_URL = "https://araujo-bot.onrender.com/api/catalogo";
+const BACKEND_URL = CATALOGO_BASE;
 
 // Estos arrays los rellena el backend al cargar.
 const PROVEEDORES_SEED = [
@@ -1812,7 +1813,7 @@ async function fetchImagenesBackend() {
     return _imagenesBackendCache;
   }
   try {
-    const r = await fetch("https://araujo-bot.onrender.com/api/facturas/imagenes");
+    const r = await fetch(`${FACTURAS_BASE}/imagenes`);
     const d = await r.json();
     _imagenesBackendCache = (d.imagenes || []).reduce((acc, img) => {
       acc[img.nombre] = img.url; return acc;
@@ -1847,7 +1848,7 @@ const ProductSVG = ({ type }) => {
       if (cancelled) return;
       if (map[type]) {
         // Añadimos timestamp para evitar caché del navegador después de actualizar
-        setBackendUrl("https://araujo-bot.onrender.com" + map[type] + "?t=" + _imagenesBackendCacheTimestamp);
+        setBackendUrl(BACKEND_HOST + map[type] + "?t=" + _imagenesBackendCacheTimestamp);
       } else {
         setBackendUrl(null);
       }
@@ -4715,7 +4716,7 @@ function GaleriaImagenes({ imagenesBackend, onSubir, onBorrar, onEditar, subiend
   }));
   const imagenesBack = (imagenesBackend || []).map(i => ({
     ...i,
-    url: i.url.startsWith("http") ? i.url : "https://araujo-bot.onrender.com" + i.url,
+    url: i.url.startsWith("http") ? i.url : BACKEND_HOST + i.url,
     origen: "backend",
   }));
   const todas = [...imagenesGit, ...imagenesBack];
@@ -4976,7 +4977,7 @@ function PestañaProductos({ data, api, reload, pin }) {
   const [imagenesBackend, setImagenesBackend] = useState([]);
   const [subiendoImg, setSubiendoImg] = useState(false);
   const [errorSubidaImg, setErrorSubidaImg] = useState(null);
-  const FAC_URL_IMGS = "https://araujo-bot.onrender.com/api/facturas";
+  const FAC_URL_IMGS = FACTURAS_BASE;
 
   // Cargar imágenes del backend cuando entras en modo imágenes
   useEffect(() => {
@@ -5494,7 +5495,7 @@ Escribe 1, 2 o 3:`, "1");
             const soloVacios = elec === "1";
             setGenerandoNombres(true);
             try {
-              const r = await fetch("https://araujo-bot.onrender.com/api/facturas/generar-nombres-cortos", {
+              const r = await fetch(`${FACTURAS_BASE}/generar-nombres-cortos`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "X-Admin-Pin": pin },
                 body: JSON.stringify({ soloVacios })
@@ -5917,7 +5918,7 @@ function ModalFusionarProductos({ par, proveedoresLista, onCerrar, onFusionado }
   const [conflictosResueltos, setConflictosResueltos] = useState({});
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState(null);
-  const FAC_URL = "https://araujo-bot.onrender.com/api/facturas";
+  const FAC_URL = FACTURAS_BASE;
 
   const ganador = ganadorId === a.id ? a : b;
   const perdedor = ganadorId === a.id ? b : a;
@@ -7824,7 +7825,7 @@ function PestañaFacturas({ api, pin }) {
   const [mostrarAnalisis, setMostrarAnalisis] = useState(false);
   const [mostrarEquivalencias, setMostrarEquivalencias] = useState(false);
   const fileRef = useRef(null);
-  const FAC_URL = "https://araujo-bot.onrender.com/api/facturas";
+  const FAC_URL = FACTURAS_BASE;
 
   const cargar = async () => {
     setCargando(true);
@@ -8247,7 +8248,7 @@ function ModalEquivalencias({ pin, onCerrar }) {
   const [editando, setEditando] = useState(null); // idx que está editando
   const [busquedaProd, setBusquedaProd] = useState("");
   const [migrando, setMigrando] = useState(false);
-  const FAC_URL = "https://araujo-bot.onrender.com/api/facturas";
+  const FAC_URL = FACTURAS_BASE;
 
   const cargar = async () => {
     setCargando(true);
@@ -8497,7 +8498,7 @@ function ModalAnalisisProductos({ facturas, filtrosActivos, pin, onCerrar, onAbr
   const [productoExpandido, setProductoExpandido] = useState(null);
   const [excluirRectificativas, setExcluirRectificativas] = useState(true); // por defecto SÍ se excluyen
   const [productoCrear, setProductoCrear] = useState(null); // producto del agregado que se está creando
-  const FAC_URL = "https://araujo-bot.onrender.com/api/facturas";
+  const FAC_URL = FACTURAS_BASE;
 
   // Detector de factura rectificativa:
   // 1. Nº de factura contiene "FR" o empieza por "R" (Aquatubo: 26AVFR00117, 25AVFR03182)
@@ -9563,7 +9564,7 @@ function ModalCrearProductoDesdeAnalisis({ producto, pin, onCerrar, onCreado }) 
   const [busquedaProd, setBusquedaProd] = useState("");
   const [productoExistente, setProductoExistente] = useState(null);
   const [filtroFamilia, setFiltroFamilia] = useState(""); // familia seleccionada para filtrar candidatos
-  const FAC_URL = "https://araujo-bot.onrender.com/api/facturas";
+  const FAC_URL = FACTURAS_BASE;
 
   // Familias únicas del catálogo + opción "(Nueva familia)"
   const familias = useMemo(() => {
@@ -9988,7 +9989,7 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
   const [filtroTipoCambio, setFiltroTipoCambio] = useState(""); // filtro tipo en el buscador
   // Modal de completar producto nuevo (desde "AÑADIR AL CATÁLOGO" se abre con datos de la línea pre-rellenados)
   const [modalCompletarNuevo, setModalCompletarNuevo] = useState(null); // { lineaIdx, plantilla }
-  const FAC_URL = "https://araujo-bot.onrender.com/api/facturas";
+  const FAC_URL = FACTURAS_BASE;
   const COLORES_PROV = ["emerald","amber","blue","violet","rose","teal"];
 
   const recargar = async () => {
@@ -10367,7 +10368,7 @@ function ModalRevisionFactura({ factura: facturaInicial, pin, onCerrar }) {
     const indices = lineasFiltradas.map(l => l.idx);
     try {
       const resultados = await Promise.all(indices.map(idx =>
-        fetch(`https://araujo-bot.onrender.com/api/facturas/linea/${factura.id}/${idx}`, {
+        fetch(`${FACTURAS_BASE}/linea/${factura.id}/${idx}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json", "x-admin-pin": pin },
           body: JSON.stringify({ estado: nuevoEstado })
